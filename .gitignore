@@ -1,0 +1,17 @@
+node_modules/
+.netlify/
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+test-results/
+playwright-report/
+__pycache__/
+# capturas de tela de testes (podem conter dados reais) e rascunhos
+screens/
+scratch/
+tmp/
+*.png.tmp
+backup*.json
+financas-flow-backup-*.json

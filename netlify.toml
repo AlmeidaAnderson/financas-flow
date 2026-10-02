@@ -1,0 +1,40 @@
+# Finanças Flow — configuração da Netlify
+# Docs: https://docs.netlify.com/build/configure-builds/file-based-configuration/
+
+[build]
+  publish = "site"                 # pasta estática publicada (sem etapa de build)
+  command = "npm test"             # roda os testes; se algum falhar, a publicação é cancelada
+
+[build.environment]
+  NODE_VERSION = "22"              # @netlify/identity exige Node >= 22.12
+
+[functions]
+  directory = "netlify/functions"  # fora da pasta publicada: o código do servidor não vira arquivo público
+  node_bundler = "esbuild"
+
+# A API (/api/*) é roteada pela própria função: `export const config = { path: ["/api/*"] }`
+# em netlify/functions/api.mjs (Functions v2). Por isso não há [[redirects]] para /api.
+
+# ---------------------------------------------------------------- cabeçalhos de segurança
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data: blob:; manifest-src 'self'; worker-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    Referrer-Policy = "no-referrer"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Cross-Origin-Opener-Policy = "same-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), browsing-topics=()"
+
+# o service worker precisa ser revalidado sempre, para as atualizações chegarem
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+    Service-Worker-Allowed = "/"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json; charset=utf-8"

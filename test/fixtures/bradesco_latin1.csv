@@ -1,0 +1,11 @@
+Bradesco - Extrato de conta corrente
+Agência: 1234 | Conta: 0012345-6
+
+Data;Histórico;Docto.;Crédito (R$);Débito (R$);Saldo (R$)
+01/09/2026;SALDO ANTERIOR;;;;1.500,00
+02/09/2026;Transferência Pix Recebida;123456;2.000,00;;3.500,00
+03/09/2026;Pagto Eletron Cobranca Condomínio Edifício;223344;;850,00;2.650,00
+05/09/2026;Débito Automático Comgás;;;123,45;2.526,55
+07/09/2026;Compra Cartão Débito Padaria São João;;;23,50;2.503,05
+10/09/2026;Tarifa Bancária Cesta;;;35,00;2.468,05
+Total;;;2.000,00;1.031,95;
