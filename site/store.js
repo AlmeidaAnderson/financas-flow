@@ -326,6 +326,8 @@
       exportAll: exportAll, importAll: importAll, parseBackup: normalizeBackup,
       sync: function () { return syncNow(); },
       destroy: destroy,
+      // v2.1: consulta de CNPJ pelo servidor (BrasilAPI) — só no modo netlify, só quando o usuário toca no botão
+      lookupCnpj: lookupCnpj,
     };
 
     function setStatus(s) { if (S.status === s) return; S.status = s; statusEv.emit(s); }
@@ -523,6 +525,16 @@
       });
     }
     function netErr() { var e = new Error('network'); e.network = true; return e; }
+    function lookupCnpj(cnpj) {
+      var d = String(cnpj || '').replace(/\D/g, '');
+      if (S.mode !== 'netlify' || !S.user) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      if (!/^\d{14}$/.test(d)) return Promise.reject(Object.assign(new Error('invalid_cnpj'), { code: 'invalid_cnpj' }));
+      return request('GET', '/api/cnpj/' + d).then(function (r) {
+        if (r.status === 200 && r.body) return r.body;
+        var code = (r.body && r.body.error) || ('http_' + r.status);
+        throw Object.assign(new Error(code), { code: code, status: r.status });
+      }, function () { throw Object.assign(new Error('network'), { code: 'network' }); });
+    }
 
     /* ---------------- leitura */
     function monthKeysFor(ym) {

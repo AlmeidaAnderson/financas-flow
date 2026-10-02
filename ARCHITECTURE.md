@@ -50,3 +50,24 @@ The "local" adapter (localStorage) is used for dev, tests and when not signed in
 - No test/auth bypass in deployed code. Tests call the handler directly with a mocked context.
 - Headers via netlify.toml: strict CSP (self only; Identity endpoints on same origin `/.netlify/identity`), X-Frame-Options DENY, Referrer-Policy no-referrer, Permissions-Policy minimal, HSTS. No third-party scripts at runtime (vendor libs).
 - Never log transaction contents in functions.
+
+## v2.1 additions
+- **API route `GET /api/cnpj/:cnpj`** (netlify/lib/api-core.mjs): verified user + `x-finflow` header required; the 14 digits
+  are validated (check digits) before anything leaves the server; 30 uncached lookups per user per hour (counter blob
+  `u/<sub>/ratelimit/cnpj`, keyed only by the verified id → 429 + Retry-After); server-side fetch of
+  `https://brasilapi.com.br/api/cnpj/v1/<cnpj>` with a 5 s timeout (504/502 on failure); returns ONLY
+  `{cnpj, cached, razao_social, nome_fantasia, cnae_fiscal, cnae_fiscal_descricao, municipio, uf}`; cached 30 days in the
+  blob `cache/cnpj/<14 digits>` (public company data, shared across users). Called only when the user taps "Consultar
+  CNPJ" (`store.lookupCnpj(cnpj)`, netlify adapter only). The Artifact build cannot reach other hosts: it links to
+  BrasilAPI and offers a "Colar CNAE" field instead (`FinEngine.suggestFromCNAE`).
+- **Transactions** may carry `balance` (cents; running balance when the file has a "Saldo" column) and `catSource: "series"`.
+- **Rules**: `{origin:"installment", seriesKey, series:{merchant,start,total,amount}, set:{categoryId}, expiresAfter:"YYYY-MM", updatedAt}`
+  remembers one installment purchase (classify priority: manual > installment series > user rules > learned > dictionary);
+  pruned on load after `expiresAfter`.
+- **Imports index** records: `from`, `to`, `duplicates`, `hasBalance`, `kindGuess`, `updatedAt`.
+- **settings** (synced meta doc, field-wise merge; every write sets `settings.updatedAt`):
+  `carry: {enabled (default true), startMonth|null, excluded:[ym], included:[ym]}` (deficit carry-over; months with a
+  blocking data-health warning are excluded unless in `included`), `rememberOff: [categoryId]` ("Lembrar" starts unticked
+  for these), `dismissedWarnings: [warningId]`, `ownerNames: [name]` (own-account transfer detection).
+- Engine: `CNAE_MAP`, `suggestFromCNAE`, `findCNPJ`, `searchQuery`, `installmentSeries`, `rememberInstallmentSeries`,
+  `pruneSeriesRules`, `carryover`, `buildSankey({carry})`, `dataHealth`, `blockingMonths`, `importKind`.

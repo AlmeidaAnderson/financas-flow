@@ -287,3 +287,62 @@ test('verifiedUser: exige claims do runtime iguais ao usuário do getUser()', as
   assert.equal(await makeVerifiedUser(async () => { throw new Error('x'); }, () => null)(), null);
   assert.equal(await makeVerifiedUser(async () => null, () => ({ token: 'op', user: { sub: 'abc' } }))(), null);
 });
+
+// ---------------------------------------------------------------- v2.1: GET /api/cnpj/:digits
+test('cnpj: autenticação, validação, campos filtrados, cache de 30 dias, limite por usuário, timeout', async () => {
+  const CNPJ = '11222333000181';
+  const calls = [];
+  let mode = 'ok';
+  const fakeFetch = async (url, opts) => {
+    calls.push(url);
+    if (mode === 'hang') return new Promise((_, rej) => { opts.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' }))); });
+    if (mode === '404') return new Response('{"message":"CNPJ não encontrado"}', { status: 404 });
+    return new Response(JSON.stringify({ cnpj: CNPJ, razao_social: 'PADARIA EXEMPLO LTDA', nome_fantasia: 'PADARIA EX', cnae_fiscal: 1091102,
+      cnae_fiscal_descricao: 'Fabricação de produtos de padaria', municipio: 'SAO PAULO', uf: 'SP', qsa: [{ nome_socio: 'FULANO' }], email: 'x@y.z', ddd_telefone_1: '11999999999' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  let t = Date.parse('2026-10-02T10:00:00Z');
+  const h = (uid) => createHandler({ getUser: async () => (uid ? { id: uid, email: '' } : null), getStore: mkStore, now: () => t, log: { error() {} }, fetch: fakeFetch });
+  const get = async (uid, p, headers) => { const r = await h(uid)(req('GET', p, undefined, headers), {}); const x = await r.text(); return { status: r.status, body: x ? JSON.parse(x) : null, headers: r.headers }; };
+
+  assert.equal((await get(null, '/api/cnpj/' + CNPJ)).status, 401);
+  assert.equal((await get('cnpjA', '/api/cnpj/' + CNPJ, { 'x-finflow': '' })).status, 403);
+  assert.equal((await get('cnpjA', '/api/cnpj/11222333000180')).status, 400, 'dígito verificador errado');
+  assert.equal((await get('cnpjA', '/api/cnpj/1122233300018')).status, 400, '13 dígitos');
+  assert.equal((await get('cnpjA', '/api/cnpj/11111111111111')).status, 400, 'repetidos');
+  assert.equal((await get('cnpjA', '/api/cnpj/..%2F..%2Fx')).status, 400);
+  assert.equal(calls.length, 0, 'nada vai para fora sem CNPJ válido');
+  const r = await get('cnpjA', '/api/cnpj/' + CNPJ);
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.body).sort(), ['cached', 'cnae_fiscal', 'cnae_fiscal_descricao', 'cnpj', 'municipio', 'nome_fantasia', 'razao_social', 'uf']);
+  assert.equal(r.body.cnae_fiscal, 1091102);
+  assert.ok(!JSON.stringify(r.body).includes('FULANO') && !JSON.stringify(r.body).includes('x@y.z'), 'sem sócios/contatos');
+  assert.equal(calls[0], 'https://brasilapi.com.br/api/cnpj/v1/' + CNPJ);
+  // cache: second call (any user) does not hit upstream
+  const r2 = await get('cnpjB', '/api/cnpj/' + CNPJ);
+  assert.equal(r2.status, 200); assert.equal(r2.body.cached, true); assert.equal(calls.length, 1);
+  t += 31 * 24 * 3600 * 1000; // cache expired
+  assert.equal((await get('cnpjB', '/api/cnpj/' + CNPJ)).body.cached, false); assert.equal(calls.length, 2);
+  // rate limit: 30 per hour per user (only uncached lookups count)
+  const mkCnpj = (base12) => { const d = String(base12).padStart(12, '0'); const dv = (s, w) => { const r = [...s].reduce((a, c, i) => a + Number(c) * w[i], 0) % 11; return r < 2 ? 0 : 11 - r; };
+    const d1 = dv(d, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]); const d2 = dv(d + d1, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]); return d + d1 + d2; };
+  t = Date.parse('2026-12-01T10:00:00Z');
+  const n0 = calls.length;
+  let last;
+  for (let i = 0; i < 30; i++) { last = await get('cnpjC', '/api/cnpj/' + mkCnpj(123456780000 + i)); assert.equal(last.status, 200, 'lookup ' + i); }
+  assert.equal(calls.length - n0, 30);
+  assert.equal((await get('cnpjC', '/api/cnpj/' + mkCnpj(123456780000))).status, 200, 'cached lookups do not count');
+  last = await get('cnpjC', '/api/cnpj/' + mkCnpj(123456789999));
+  assert.equal(last.status, 429);
+  assert.equal(calls.length - n0, 30, 'over the limit: nothing sent upstream');
+  assert.ok(Number(last.headers.get('retry-after')) > 0);
+  assert.equal((await get('cnpjD', '/api/cnpj/' + CNPJ)).status, 200, 'other users are not limited');
+  // upstream 404 / timeout
+  t += 3600 * 1000 * 24 * 40;
+  mode = '404'; assert.equal((await get('cnpjE', '/api/cnpj/' + CNPJ)).status, 404);
+  mode = 'hang';
+  const t0 = Date.now();
+  const rt = await get('cnpjE', '/api/cnpj/' + CNPJ);
+  assert.equal(rt.status, 504); assert.ok(Date.now() - t0 < 7000);
+  // only GET
+  assert.equal((await h('cnpjA')(req('PUT', '/api/cnpj/' + CNPJ, {}), {})).status, 405);
+});

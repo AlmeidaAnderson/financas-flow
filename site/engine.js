@@ -887,6 +887,11 @@
     const userRules = sortRules(all.filter(r => (r.origin || 'user') === 'user'));
     const learned = sortRules(all.filter(r => r.origin === 'learned' || r.origin === 'ai'));
     let categoryId = null, catSource = null, ruleKind = null;
+    // a purchase remembered on its own (installment series) wins over user rules, learned rules and the dictionary
+    if (tx.installment) {
+      const sr = all.find(r => r && r.origin === 'installment' && seriesMatches(r, tx));
+      if (sr && sr.set && sr.set.categoryId) { categoryId = sr.set.categoryId; catSource = 'series'; }
+    }
     for (const [list, srcFn] of [[userRules, () => 'rule'], [learned, r => (r.origin === 'ai' ? 'ai' : 'learned')]]) {
       if (catSource) break;
       for (const r of list) {
@@ -1504,7 +1509,9 @@
       if (am.amount === 0) { errors.push({ rowIndex: i, raw, reason: 'valor zero' }); continue; }
       const desc = (c.description != null ? r[c.description] : '') || '';
       const time = (c.time != null ? parseTime(r[c.time]) : null) || timeFromDateCell(r[c.date]);
-      pending.push({ i, dp, amount: am.amount, desc: desc || '(sem descrição)', instCell: c.installment != null ? r[c.installment] : '', time });
+      // running balance ("Saldo") column: kept per row so data-health can find missing rows
+      const balance = c.balance != null && r[c.balance] ? parseAmount(r[c.balance], profile.numberFormat || 'br') : null;
+      pending.push({ i, dp, amount: am.amount, desc: desc || '(sem descrição)', instCell: c.installment != null ? r[c.installment] : '', time, balance });
     }
     // resolve year-less dates
     const withYear = pending.filter(p => p.dp.hasYear);
@@ -1546,6 +1553,7 @@
       };
       if (installment && date !== purchaseDate) tx.originalDate = purchaseDate;
       if (p.time) tx.time = p.time;
+      if (p.balance != null) tx.balance = p.balance;
       total += p.amount;
       transactions.push(tx);
     }
@@ -1894,7 +1902,21 @@
     const totalIn = [...income.values()].reduce((a, b) => a + b, 0);
     const totalOut = [...exp.values()].reduce((a, b) => a + b, 0);
     if (!totalIn && !totalOut) return { nodes: [], links: [], meta: { income: 0, expense: 0, surplus: 0, deficit: 0 } };
-    const surplus = Math.max(0, totalIn - totalOut), deficit = Math.max(0, totalOut - totalIn);
+    const deficit = Math.max(0, totalOut - totalIn);
+    let surplus = Math.max(0, totalIn - totalOut);
+    // carry-over (one month): part of the surplus pays back the deficit carried from earlier months,
+    // and the month's own deficit is shown by what covered it (card paid next month, redemptions, balance)
+    const carry = opts.carry || null;
+    const repaid = carry && carry.repaid > 0 ? Math.min(Math.round(carry.repaid), surplus) : 0;
+    surplus -= repaid;
+    let defParts = deficit > 0 ? [{ id: 'deficit', name: 'Déficit', v: deficit }] : [];
+    const cov = carry && carry.coverage;
+    if (deficit > 0 && cov && (cov.card > 0 || cov.investments > 0)) {
+      const card = Math.min(deficit, Math.max(0, Math.round(cov.card || 0)));
+      const inv = Math.min(deficit - card, Math.max(0, Math.round(cov.investments || 0)));
+      defParts = [{ id: 'deficit:card', name: 'Cartão (paga no mês seguinte)', v: card }, { id: 'deficit:inv', name: 'Resgates de investimento', v: inv },
+        { id: 'deficit:bal', name: 'Saldo/reserva', v: deficit - card - inv }].filter(x => x.v > 0);
+    }
     const nodes = [], links = [];
     const nodeMap = new Map();
     const addNode = (id, name, color, column) => { if (!nodeMap.has(id)) { const n = { id, name, color, value: 0, column }; nodeMap.set(id, n); nodes.push(n); } return nodeMap.get(id); };
@@ -1907,7 +1929,7 @@
     // column 0: income sources
     const srcName = k => k === '__outras' ? 'Outras receitas' : k === '__resgates' ? 'Resgates' : k === '__estornos' ? 'Estornos' : (ci[k] ? ci[k].name : k);
     let srcs = [...income.entries()].map(([k, v]) => ({ k, v })).sort((a, b) => b.v - a.v);
-    const srcSlots = maxNodes - (deficit > 0 ? 1 : 0);
+    const srcSlots = Math.max(2, maxNodes - defParts.length);
     if (srcs.length > srcSlots) {
       const keep = srcs.slice(0, Math.max(1, srcSlots - 1));
       const rest = srcs.slice(keep.length);
@@ -1919,7 +1941,8 @@
       addNode(id, s.name || srcName(s.k), (ci[s.k] && ci[s.k].color) || GREEN, 0);
       addLink(id, HUB, s.v);
     }
-    if (deficit > 0) { addNode('deficit', 'Déficit', RED, 0); addLink('deficit', HUB, deficit); }
+    const DEF_COLORS = { deficit: RED, 'deficit:card': '#D9534F', 'deficit:inv': '#C2410C', 'deficit:bal': RED };
+    for (const d of defParts) { addNode(d.id, d.name, DEF_COLORS[d.id] || RED, 0); addLink(d.id, HUB, d.v); }
 
     const fold3 = (entries) => { // entries: {parent, key, name, color, v}
       entries.sort((a, b) => b.v - a.v);
@@ -1948,7 +1971,7 @@
         groups.set(gid, g);
       }
       let glist = [...groups.entries()].map(([gid, g]) => ({ gid, v: g.v, children: g.children })).sort((a, b) => b.v - a.v);
-      const gSlots = maxNodes - (surplus > 0 ? 1 : 0);
+      const gSlots = maxNodes - (surplus > 0 ? 1 : 0) - (repaid > 0 ? 1 : 0);
       let foldedGroups = null;
       if (glist.length > gSlots) {
         const keep = glist.slice(0, Math.max(1, gSlots - 1));
@@ -1988,7 +2011,7 @@
         accs.set(acc, a);
       }
       let alist = [...accs.entries()].map(([acc, a]) => ({ acc, v: a.v, groups: a.groups })).sort((x, y) => y.v - x.v);
-      const aSlots = maxNodes - (surplus > 0 ? 1 : 0);
+      const aSlots = maxNodes - (surplus > 0 ? 1 : 0) - (repaid > 0 ? 1 : 0);
       let folded = null;
       if (alist.length > aSlots) { const keep = alist.slice(0, Math.max(1, aSlots - 1)); folded = alist.slice(keep.length); alist = keep; }
       const entries = [];
@@ -2011,6 +2034,11 @@
       }
     }
     if (surplus > 0) { addNode('sobra', 'Sobra / Poupança', TEAL, 2); addLink(HUB, 'sobra', surplus); }
+    if (repaid > 0) {
+      const prev = carry.month ? addMonths(carry.month, -1) : null;
+      addNode('carry', carry.label || ('Déficit de ' + (prev ? monthName(prev) : 'meses anteriores') + ' (pagando)'), '#B45309', 2);
+      addLink(HUB, 'carry', repaid);
+    }
 
     for (const [k, v] of linkMap) {
       const [s, t] = k.split('\u0002');
@@ -2022,7 +2050,7 @@
     const used = new Set(links.flatMap(l => [l.source, l.target]));
     const finalNodes = nodes.filter(n => used.has(n.id));
     for (const n of finalNodes) n.value = Math.max(inSum.get(n.id) || 0, outSum.get(n.id) || 0);
-    return { nodes: finalNodes, links, meta: { income: totalIn, expense: totalOut, surplus, deficit } };
+    return { nodes: finalNodes, links, meta: { income: totalIn, expense: totalOut, surplus, deficit, repaid } };
   }
 
   // ---------------------------------------------------------------------------
@@ -2222,6 +2250,729 @@
   }
 
   // ---------------------------------------------------------------------------
+  // v2.1 — CNPJ / CNAE help for unclassified spending
+  // ---------------------------------------------------------------------------
+  /** 14 digits with valid check digits (rejects 00000000000000 and other repeated digits). */
+  function validCNPJ(digits) {
+    const d = String(digits == null ? '' : digits).replace(/\D/g, '');
+    if (d.length !== 14 || /^(\d)\1{13}$/.test(d)) return false;
+    const calc = (len) => {
+      const w = len === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+      let s = 0;
+      for (let i = 0; i < len; i++) s += +d[i] * w[i];
+      const r = s % 11;
+      return r < 2 ? 0 : 11 - r;
+    };
+    return calc(12) === +d[12] && calc(13) === +d[13];
+  }
+  /** First valid CNPJ in a text: "12.345.678/0001-95" or 14 digits in a row -> "12345678000195" | null */
+  function findCNPJ(text) {
+    const s = String(text == null ? '' : text);
+    const re = /(?<!\d)(\d{2})[.\s]?(\d{3})[.\s]?(\d{3})[/\s]?(\d{4})[-.\s]?(\d{2})(?!\d)/g;
+    let m;
+    while ((m = re.exec(s))) {
+      const d = m.slice(1).join('');
+      if (validCNPJ(d)) return d;
+    }
+    return null;
+  }
+  function formatCNPJ(d) {
+    d = String(d || '').replace(/\D/g, '');
+    return d.length === 14 ? d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5, 8) + '/' + d.slice(8, 12) + '-' + d.slice(12) : d;
+  }
+  const CITY_FIND_RE = new RegExp('(?:^|\\s)(' + CITIES.filter(c => c !== 'INTERNET' && c !== 'WWW').map(c => c.replace(/ /g, '\\s+')).join('|') + ')(?=\\s|$)');
+  /** "Pesquisar no Google" text: merchant + city when the raw description has one. */
+  function searchQuery(tx) {
+    tx = tx || {};
+    // no CNPJ / long numbers in the query: the name (and city) is what finds the business
+    const merchant = String(tx.merchant || normalizeDescription(tx.rawDescription || '').merchant || '')
+      .replace(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/g, ' ').replace(/\b\d{5,}\b/g, ' ').replace(/\s+/g, ' ').trim();
+    const m = CITY_FIND_RE.exec(norm(tx.rawDescription || ''));
+    const city = m ? m[1].replace(/\s+/g, ' ') : '';
+    return (merchant + (city && norm(merchant).indexOf(city) < 0 ? ' ' + city : '')).trim();
+  }
+
+  /** CNAE (digits prefix: division 2, group 3, class 4-5, subclass 7) -> category. Most specific prefix wins. */
+  const CNAE_SRC = [
+    ['4711', 'alimentacao.mercado', 'Supermercado / hipermercado'], ['4712', 'alimentacao.mercado', 'Minimercado / mercearia'],
+    ['4713', 'compras.marketplace', 'Loja de departamentos'],
+    ['4721', 'alimentacao.padaria', 'Padaria, confeitaria, laticínios e doces'], ['4722', 'alimentacao.mercado', 'Açougue / peixaria'],
+    ['4723', 'alimentacao.mercado', 'Bebidas'], ['4724', 'alimentacao.mercado', 'Hortifrutigranjeiros'], ['4729', 'alimentacao.mercado', 'Produtos alimentícios'],
+    ['1091', 'alimentacao.padaria', 'Padaria (fabricação própria)'],
+    ['56', 'alimentacao.restaurante', 'Alimentação (restaurantes, lanchonetes, bares)'], ['5611201', 'alimentacao.restaurante', 'Restaurante'],
+    ['5611203', 'alimentacao.restaurante', 'Lanchonete / casa de chá / sucos'], ['5611204', 'lazer.bares', 'Bar (sem entretenimento)'],
+    ['5611205', 'lazer.bares', 'Bar com entretenimento'], ['5620104', 'alimentacao.delivery', 'Comida preparada para consumo em casa'],
+    ['4771', 'saude.farmacia', 'Farmácia / drogaria'], ['4772', 'pessoal.beleza', 'Perfumaria e cosméticos'],
+    ['4731', 'transporte.combustivel', 'Posto de combustível'], ['4732', 'transporte.manutencao', 'Lubrificantes'],
+    ['4923', 'transporte.app', 'Táxi / transporte por aplicativo'], ['4921', 'transporte.publico', 'Ônibus urbano'], ['4922', 'transporte.publico', 'Ônibus intermunicipal'],
+    ['4912', 'transporte.publico', 'Metrô / trem'], ['4924', 'educacao.escola', 'Transporte escolar'],
+    ['5223', 'transporte.estacionamento', 'Estacionamento'], ['5221', 'transporte.pedagio', 'Rodovia / pedágio'],
+    ['4520', 'transporte.manutencao', 'Oficina / manutenção de veículos'], ['4530', 'transporte.manutencao', 'Peças e acessórios para veículos'],
+    ['4541', 'transporte.manutencao', 'Motocicletas e peças'], ['4543', 'transporte.manutencao', 'Manutenção de motocicletas'],
+    ['86', 'saude.consultas', 'Saúde (clínicas, consultórios, exames)'], ['8610', 'saude.consultas', 'Hospital'],
+    ['6550', 'saude.plano', 'Plano de saúde'],
+    ['85', 'educacao.escola', 'Educação'], ['8593', 'educacao.cursos', 'Ensino de idiomas'], ['8599', 'educacao.cursos', 'Cursos e treinamentos'],
+    ['8592', 'educacao.cursos', 'Ensino de arte e cultura'], ['8591', 'saude.academia', 'Ensino de esportes'],
+    ['9313', 'saude.academia', 'Academia / condicionamento físico'],
+    ['93', 'lazer.eventos', 'Esporte e lazer'], ['90', 'lazer.eventos', 'Artes, espetáculos'], ['59', 'lazer.eventos', 'Cinema / audiovisual'],
+    ['9200', 'lazer.jogos', 'Jogos e apostas'],
+    ['4781', 'compras.vestuario', 'Vestuário e acessórios'], ['4782', 'compras.vestuario', 'Calçados e artigos de viagem'], ['4783', 'compras.presentes', 'Joias e relógios'],
+    ['475', 'compras.casa', 'Artigos para casa'], ['4751', 'compras.eletronicos', 'Informática'], ['4752', 'compras.eletronicos', 'Telefonia'],
+    ['4753', 'compras.eletronicos', 'Eletrodomésticos e áudio/vídeo'], ['4754', 'compras.casa', 'Móveis e iluminação'], ['4755', 'compras.casa', 'Tecidos, cama, mesa e banho'],
+    ['4759', 'compras.casa', 'Artigos de uso doméstico'],
+    ['474', 'moradia.manutencao', 'Material de construção'],
+    ['4761', 'educacao.livros', 'Livros, jornais e papelaria'], ['4762', 'educacao.livros', 'Discos, CDs e DVDs'],
+    ['4763601', 'compras.presentes', 'Brinquedos'], ['4763602', 'compras.vestuario', 'Artigos esportivos'],
+    ['9602', 'pessoal.beleza', 'Cabeleireiro / estética'], ['75', 'pessoal.pets', 'Veterinária'], ['4789004', 'pessoal.pets', 'Pet shop (animais e rações)'],
+    ['9609208', 'pessoal.pets', 'Banho e tosa'],
+    ['61', 'servicos.telefone', 'Telecomunicações'], ['35', 'moradia.energia', 'Energia elétrica'], ['3520', 'moradia.gas', 'Gás canalizado'], ['36', 'moradia.agua', 'Água e esgoto'],
+    ['64', 'servicos.bancos', 'Banco / serviço financeiro'], ['65', 'servicos.seguros', 'Seguros e previdência'], ['66', 'servicos.bancos', 'Serviços financeiros auxiliares'],
+    ['79', 'lazer.viagem', 'Agência de viagem / turismo'], ['55', 'lazer.viagem', 'Hospedagem'], ['51', 'lazer.viagem', 'Transporte aéreo'], ['7711', 'lazer.viagem', 'Aluguel de carros'],
+    ['62', 'servicos.software', 'Software / tecnologia'], ['63', 'servicos.software', 'Serviços de informação / internet'],
+    ['6810', 'moradia.aluguel', 'Imobiliária'], ['6822', 'moradia.aluguel', 'Administração de imóveis'], ['8112', 'moradia.condominio', 'Condomínio'],
+    ['8411', 'impostos.outros', 'Administração pública']
+  ];
+  const CNAE_MAP = {};
+  for (const [k, categoryId, d] of CNAE_SRC) CNAE_MAP[k] = { categoryId, description: d };
+  // activity text (pasted from a CNPJ lookup) -> category, when no code is found
+  const CNAE_TEXT = [
+    [/SUPERMERCADO|HIPERMERCADO|MINIMERCADO|MERCEARIA|ARMAZE?NS?|PRODUTOS ALIMENTICIOS/, '4711'], [/ACOUGUE|PEIXARIA/, '4722'], [/HORTIFRUTI/, '4724'],
+    [/PADARIA|CONFEITARIA|PANIFICA/, '4721'], [/RESTAURANTE/, '5611201'], [/LANCHONETE|CASAS? DE CHA|SUCOS/, '5611203'], [/\bBARES\b|\bBAR\b|CHOPERIA|CERVEJARIA/, '5611204'],
+    [/FARMAC|DROGARIA|MEDICAMENTOS/, '4771'], [/COSMETICOS|PERFUMARIA/, '4772'], [/COMBUSTIVEIS|POSTOS? DE GASOLINA/, '4731'],
+    [/TAXI|TRANSPORTE (?:INDIVIDUAL )?DE PASSAGEIROS POR APLICATIVO/, '4923'], [/ESTACIONAMENTO/, '5223'], [/RODOVIA|PEDAGIO/, '5221'],
+    [/MANUTENCAO E REPARACAO (?:MECANICA )?DE VEICULOS|OFICINA|PECAS E ACESSORIOS/, '4520'], [/ACADEMIA|CONDICIONAMENTO FISICO/, '9313'],
+    [/HOSPITAL|CLINICA|CONSULTORIO|MEDIC[AO]|ODONTOLOG|LABORATORI|EXAMES/, '86'], [/ENSINO|ESCOLA|EDUCACAO|CURSOS?\b/, '85'],
+    [/VESTUARIO|CALCADOS|ROUPAS/, '4781'], [/MATERIA(?:L|IS) DE CONSTRUCAO|FERRAGENS|TINTAS/, '474'], [/MOVEIS|ELETRODOMESTICOS|UTILIDADES DOMESTICAS/, '475'],
+    [/LIVROS|PAPELARIA/, '4761'], [/CABELEIREIR|ESTETICA|MANICURE|BELEZA/, '9602'], [/VETERINARI|ANIMAIS DE ESTIMACAO|PET ?SHOP/, '75'],
+    [/TELECOMUNICACOES|TELEFONIA/, '61'], [/ENERGIA ELETRICA/, '35'], [/AGUA E ESGOTO|SANEAMENTO/, '36'], [/SEGUROS?\b/, '65'], [/BANCO|CREDITO|FINANCEIR/, '64'],
+    [/AGENCIAS? DE VIAGEM|TURISMO/, '79'], [/HOTEIS|HOTEL|POUSADA|HOSPEDAGEM/, '55'], [/SOFTWARE|PROGRAMAS DE COMPUTADOR|INTERNET/, '62'],
+    [/CINEMA|ESPETACULOS|EVENTOS|PARQUES? DE DIVERSAO/, '93']
+  ];
+  function cnaeLookup(digits) {
+    for (let len = Math.min(7, digits.length); len >= 2; len--) {
+      const e = CNAE_MAP[digits.slice(0, len)];
+      if (e) return { key: digits.slice(0, len), e };
+    }
+    return null;
+  }
+  function formatCNAE(d) {
+    if (d.length >= 7) return d.slice(0, 4) + '-' + d[4] + '/' + d.slice(5, 7);
+    if (d.length === 5) return d.slice(0, 4) + '-' + d[4];
+    if (d.length === 4) return d.slice(0, 2) + '.' + d.slice(2);
+    return d;
+  }
+  /** "4771-7/01", "47.71-7-01", "4771701", a pasted BrasilAPI JSON, or a text with a code / an activity description
+   *  -> { code, description?, categoryId, confidence } | null. Only a suggestion: the app shows it as a chip. */
+  function suggestFromCNAE(input) {
+    let s = String(input == null ? '' : input).trim();
+    if (!s) return null;
+    let desc = null, digits = null;
+    if (/^[{[]/.test(s)) {
+      try {
+        const o = JSON.parse(s);
+        const j = Array.isArray(o) ? o[0] : o;
+        if (j && j.cnae_fiscal != null) { digits = String(j.cnae_fiscal).replace(/\D/g, ''); desc = j.cnae_fiscal_descricao || null; }
+      } catch (e) { /* not JSON */ }
+    }
+    if (!digits) {
+      const jm = /"?cnae_fiscal"?\s*:\s*"?(\d{7})/.exec(s);
+      if (jm) { digits = jm[1]; const dm = /"?cnae_fiscal_descricao"?\s*:\s*"([^"]+)"/.exec(s); if (dm) desc = dm[1]; }
+    }
+    if (!digits) {
+      const m = /(?<!\d)(\d{2})\.?(\d{2})-?(\d)(?:\s*[/-]\s*(\d{2}))?(?!\d)/.exec(s);
+      if (m && (m[0].length >= 6 || /[.\-/]/.test(m[0]))) digits = m[1] + m[2] + m[3] + (m[4] || '');
+      else if (/^\d[\d.\-/\s]*$/.test(s) && s.replace(/\D/g, '').length >= 2 && s.replace(/\D/g, '').length <= 7) digits = s.replace(/\D/g, '');
+    }
+    if (digits) {
+      const hit = cnaeLookup(digits);
+      if (hit) {
+        const conf = hit.key.length >= 7 ? 0.9 : hit.key.length >= 4 ? 0.8 : hit.key.length === 3 ? 0.7 : 0.6;
+        return { code: formatCNAE(digits), description: desc || hit.e.description, categoryId: hit.e.categoryId, confidence: conf };
+      }
+      if (!desc) return null;
+      s = desc;
+    }
+    const n = norm(s);
+    for (const [re, key] of CNAE_TEXT) {
+      if (re.test(n)) { const e = CNAE_MAP[key]; return { code: digits ? formatCNAE(digits) : null, description: desc || e.description, categoryId: e.categoryId, confidence: 0.5 }; }
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // v2.1 — remember the category of ONE installment purchase (its series of parcelas)
+  // ---------------------------------------------------------------------------
+  /** -> { merchant, start, total, amount, n, key } | null. start = purchase date (originalDate, or date for n=1). */
+  function installmentSeries(tx) {
+    if (!tx || !tx.installment || !(tx.installment.total >= 2) || !(tx.installment.n >= 1)) return null;
+    const merchant = norm(tx.merchant || normalizeDescription(tx.rawDescription || '').merchant);
+    const start = tx.originalDate || (tx.installment.n === 1 ? tx.date : shiftDateMonths(tx.date, -(tx.installment.n - 1)));
+    const amount = Math.abs(tx.amount || 0);
+    return { merchant, start, total: tx.installment.total, amount, n: tx.installment.n, key: [merchant, start, tx.installment.total, amount].join('|') };
+  }
+  function seriesMatches(rule, tx) {
+    if (!rule || rule.origin !== 'installment' || !rule.series) return false;
+    const s = installmentSeries(tx);
+    if (!s) return false;
+    const r = rule.series;
+    return s.merchant === r.merchant && s.start === r.start && s.total === r.total && Math.abs(s.amount - r.amount) <= 1;
+  }
+  /** Rule that remembers categoryId for the purchase tx belongs to. -> { rules, created } (created null when unchanged). */
+  function rememberInstallmentSeries(tx, categoryId, rules, opts) {
+    opts = opts || {};
+    rules = (rules || []).slice();
+    const s = installmentSeries(tx);
+    if (!s || !categoryId) return { rules, created: null };
+    const idx = rules.findIndex(r => seriesMatches(r, tx));
+    const now = opts.now || new Date().toISOString();
+    const lastDate = shiftDateMonths(s.start, s.total - 1);
+    const rule = { id: 'series_' + hashStr(s.key), origin: 'installment', seriesKey: s.key,
+      series: { merchant: s.merchant, start: s.start, total: s.total, amount: s.amount },
+      set: { categoryId }, expiresAfter: monthOf(lastDate), label: s.merchant, priority: 0, updatedAt: now };
+    if (idx >= 0) {
+      if (rules[idx].set && rules[idx].set.categoryId === categoryId) return { rules, created: null, existing: rules[idx] };
+      rule.id = rules[idx].id;
+      rules[idx] = rule;
+    } else rules.push(rule);
+    return { rules, created: rule };
+  }
+  /** Drops installment-series rules whose last parcela month is before `month` (default: this month). */
+  function pruneSeriesRules(rules, month) {
+    const cur = month || (nowParts().y + '-' + pad2(nowParts().m));
+    const out = (rules || []).filter(r => !(r && r.origin === 'installment' && r.expiresAfter && r.expiresAfter < cur));
+    return { rules: out, removed: (rules || []).length - out.length };
+  }
+
+  // ---------------------------------------------------------------------------
+  // v2.1 — deficit carry-over between months
+  // ---------------------------------------------------------------------------
+  /** carryover(transactions, { startMonth, endMonth, enabled, excludedMonths, accounts })
+   *  -> [{ month, income, expense, net, carryIn, repaid, carryOut, excluded, coverage:{card, investments, balance},
+   *        newDeficit, cardPurchases, redemptions }] */
+  function carryover(transactions, opts) {
+    opts = opts || {};
+    const live = (transactions || []).filter(t => t && !t.deleted && t.date);
+    if (!live.length && !opts.startMonth) return [];
+    const ms = live.map(t => monthOf(t.date)).sort();
+    const start = opts.startMonth || ms[0];
+    const end = opts.endMonth || ms[ms.length - 1];
+    if (!start || !end || start > end) return [];
+    const enabled = opts.enabled !== false;
+    const excluded = new Set(opts.excludedMonths || []);
+    const types = {};
+    for (const a of opts.accounts || []) if (a && a.id) types[a.id] = a.type;
+    const eff = effective(live, start + '-01', end + '-31');
+    const by = {};
+    for (const t of eff) {
+      const m = monthOf(t.date);
+      const r = by[m] || (by[m] = { income: 0, expense: 0, card: 0, red: 0 });
+      if (t.kind === 'income') r.income += t.amount;
+      else if (t.kind === 'expense') { r.expense -= t.amount; if (types[t.accountId] === 'credit_card') r.card -= t.amount; }
+      else if (t.kind === 'investment' && t.amount > 0) r.red += t.amount;
+    }
+    const out = [];
+    let D = 0;
+    for (let m = start; m <= end; m = addMonths(m, 1)) {
+      const r = by[m] || { income: 0, expense: 0, card: 0, red: 0 };
+      const net = r.income - r.expense;
+      const row = { month: m, income: r.income, expense: r.expense, net, carryIn: D, repaid: 0, carryOut: D, excluded: excluded.has(m),
+        newDeficit: 0, cardPurchases: Math.max(0, r.card), redemptions: r.red, coverage: { card: 0, investments: 0, balance: 0 } };
+      if (net < 0) {
+        const nd = -net;
+        row.newDeficit = nd;
+        row.coverage.card = Math.min(nd, row.cardPurchases);
+        row.coverage.investments = Math.min(nd - row.coverage.card, r.red);
+        row.coverage.balance = nd - row.coverage.card - row.coverage.investments;
+      }
+      if (!enabled) { row.carryIn = 0; row.carryOut = 0; }
+      else if (!row.excluded) {
+        const available = net;
+        row.repaid = Math.min(Math.max(available, 0), D);
+        D -= row.repaid;
+        if (available < 0) D += -available;
+        row.carryOut = D;
+      }
+      out.push(row);
+    }
+    return out;
+  }
+  const MES_PT = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  function monthName(ym) { const m = +String(ym || '').slice(5, 7); return MES_PT[m - 1] || ym; }
+
+  // ---------------------------------------------------------------------------
+  // v2.1 — data health ("Saúde dos dados")
+  // ---------------------------------------------------------------------------
+  const COMPANY_RE = /\b(LTDA|S\.?\s?A\.?|ME|EIRELI|EPP|INSTITUICAO|PAGAMENTOS?|BANCO|BCO|SERVICOS|COMERCIO|TECNOLOGIA|INVESTIMENTOS|CORRETORA|DISTRIBUIDORA|IFOOD|MERCADO|LOJA|RESTAURANTE)\b/;
+  function counterpartyOf(tx) {
+    const raw = norm(tx.rawDescription || '');
+    const nd = normalizeDescription(tx.rawDescription || '');
+    let dir = null, name = null;
+    if (nd.prefix && /^PIX/.test(nd.prefix)) { dir = /RECEB/.test(nd.prefix) ? 'in' : /ENVI/.test(nd.prefix) ? 'out' : (tx.amount > 0 ? 'in' : 'out'); name = nd.counterparty; }
+    else {
+      const m = /\b(?:TED|DOC|TRANSF(?:ERENCIA)?)\s+(RECEBID[AO]|ENVIAD[AO]|EMITID[AO])?\s*(?:DE|PARA|P\/)?\s+(.+)$/.exec(raw);
+      if (m) { dir = /RECEB/.test(m[1] || '') ? 'in' : /ENVI|EMIT/.test(m[1] || '') ? 'out' : (tx.amount > 0 ? 'in' : 'out'); name = m[2].replace(/\s+\d[\d.\-/]*$/, '').trim(); }
+    }
+    if (!name || name.length < 4) return null;
+    return { dir, name };
+  }
+  function nameMatches(a, b) {
+    const ta = norm(a).split(/[^A-Z]+/).filter(w => w.length > 1), tb = new Set(norm(b).split(/[^A-Z]+/).filter(w => w.length > 1));
+    if (!ta.length || !tb.size) return false;
+    const inter = ta.filter(w => tb.has(w)).length;
+    return inter >= Math.min(2, ta.length, tb.size) && inter / Math.min(ta.length, tb.size) >= 0.6;
+  }
+  /** 'extrato' | 'fatura' | null — from the rows of one import */
+  function importKind(txs, rec) {
+    const list = (txs || []).filter(t => t && !t.deleted);
+    if (!list.length) return null;
+    if (rec && /^payslip|^hol-/.test(rec.id || '')) return null;
+    let bank = 0, card = 0;
+    const n = list.length;
+    const bal = list.filter(t => t.balance != null).length;
+    const bankish = list.filter(t => BANKISH_RE.test(norm(t.rawDescription)) && !CARD_PAYMENT_RE.test(norm(t.rawDescription))).length;
+    const timed = list.filter(t => t.time).length;
+    const inst = list.filter(t => t.installment).length;
+    const pos = list.filter(t => t.amount > 0 && t.kind !== 'card_payment').length;
+    if (bal / n >= 0.5 || (rec && rec.hasBalance)) bank += 3;
+    if (bankish / n >= 0.2) bank += 3;
+    if (timed / n >= 0.5) bank += 2;
+    if (pos / n >= 0.2) bank += 1;
+    if (inst / n >= 0.03) card += 3;
+    if (pos / n < 0.1 && n >= 5) card += 2;
+    if (bank >= 3 && bank > card) return 'extrato';
+    if (card >= 2 && card > bank) return 'fatura';
+    return null;
+  }
+
+  /** dataHealth({ transactions, accounts, imports, payslips?, settings, today? }) -> warnings[] (+ .errors: checks that threw).
+   *  Warning: { id, severity: info|warning|blocking, title, detail, months[], accountId?, importIds?, action?: {type, label, ...} } */
+  function dataHealth(input) {
+    input = input || {};
+    const settings = input.settings || {};
+    const dismissed = new Set(settings.dismissedWarnings || []);
+    const today = input.today || (nowParts().y + '-' + pad2(nowParts().m) + '-' + pad2(nowParts().d));
+    const curMonth = today.slice(0, 7);
+    const accounts = (input.accounts || []).filter(a => a && a.id);
+    const accById = {}; accounts.forEach(a => { accById[a.id] = a; });
+    const accName = id => (accById[id] && accById[id].name) || id;
+    const typeOf = id => (accById[id] && accById[id].type) || null;
+    let all = (input.transactions || []).filter(t => t && !t.deleted && t.date);
+    if (input.payslips && input.payslips.length) {
+      const ids = new Set(all.map(t => t.id));
+      for (const p of input.payslips) for (const t of (p && p.amount !== undefined ? [p] : payslipToTransactions(p))) if (!ids.has(t.id)) { all.push(t); ids.add(t.id); }
+    }
+    const txs = all.filter(t => !t.payslip && typeOf(t.accountId) !== 'payslip');
+    const imports = input.imports || {};
+    const byImport = new Map();
+    for (const t of txs) { const k = t.importId || '__none'; if (!byImport.has(k)) byImport.set(k, []); byImport.get(k).push(t); }
+    const impInfo = [];
+    for (const [id, list] of byImport) {
+      if (id === '__none' || id === 'exemplo') continue;
+      const rec = imports[id] || { id };
+      const dates = list.map(t => t.date).sort();
+      const freq = {}; list.forEach(t => { freq[t.accountId] = (freq[t.accountId] || 0) + 1; });
+      const accountId = Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0];
+      impInfo.push({ id, rec, list, from: dates[0], to: dates[dates.length - 1], accountId, kind: importKind(list, rec), name: rec.fileName || id });
+    }
+    const impById = new Map(impInfo.map(i => [i.id, i]));
+    const kindOfTx = t => { const i = impById.get(t.importId); return i ? i.kind : null; };
+    const dataMonths = new Set(txs.map(t => monthOf(t.date)));
+    const maxDateInMonth = {};
+    for (const t of txs) { const m = monthOf(t.date); if (!maxDateInMonth[m] || t.date > maxDateInMonth[m]) maxDateInMonth[m] = t.date; }
+    const fmtM = ym => monthName(ym) + ' ' + String(ym).slice(0, 4);
+    const out = [];
+    const errors = [];
+    const push = w => { if (!dismissed.has(w.id)) out.push(w); };
+    const run = (name, fn) => { try { fn(); } catch (e) { errors.push({ check: name, message: String(e && e.message || e) }); } };
+
+    // a. months without any transaction between an account's first and last month
+    run('a', () => {
+      const by = {};
+      for (const t of txs) { (by[t.accountId] = by[t.accountId] || new Set()).add(monthOf(t.date)); }
+      for (const acc of Object.keys(by)) {
+        const ms = [...by[acc]].sort();
+        for (let m = ms[0]; m < ms[ms.length - 1]; m = addMonths(m, 1)) {
+          if (by[acc].has(m)) continue;
+          push({ id: 'a:gap:' + acc + ':' + m, severity: 'blocking', title: 'Mês sem lançamentos em ' + accName(acc),
+            detail: accName(acc) + ' tem lançamentos antes e depois de ' + fmtM(m) + ', mas nenhum neste mês. Falta importar o extrato ou a fatura desse período.',
+            months: [m], accountId: acc, action: { type: 'import', label: 'Importar ' + (typeOf(acc) === 'credit_card' ? 'fatura' : 'extrato') + ' de ' + monthName(m), accountId: acc, month: m } });
+        }
+      }
+    });
+
+    // b. extrato in a card account / fatura in a checking account / one account with both
+    run('b', () => {
+      const kindsBy = {};
+      for (const i of impInfo) {
+        if (!i.kind) continue;
+        (kindsBy[i.accountId] = kindsBy[i.accountId] || { extrato: [], fatura: [] })[i.kind].push(i);
+        const at = typeOf(i.accountId);
+        const months = [...new Set(i.list.map(t => monthOf(t.date)))].sort();
+        if (i.kind === 'extrato' && at === 'credit_card') {
+          push({ id: 'b:extrato-in-card:' + i.id, severity: 'warning', title: 'Extrato bancário dentro de um cartão',
+            detail: '"' + i.name + '" parece um extrato de conta (Pix, TED, saldo ou rendimentos), mas está em ' + accName(i.accountId) + ', que é um cartão de crédito. Assim, entradas viram estornos e pagamentos de fatura se confundem com as compras. Mova esta importação para uma conta corrente.',
+            months, accountId: i.accountId, importIds: [i.id], action: { type: 'move-import', label: 'Mover importação', importId: i.id } });
+        } else if (i.kind === 'fatura' && (at === 'checking' || at === 'savings')) {
+          push({ id: 'b:fatura-in-checking:' + i.id, severity: 'warning', title: 'Fatura de cartão dentro de uma conta corrente',
+            detail: '"' + i.name + '" parece uma fatura de cartão (parcelas, quase só compras), mas está em ' + accName(i.accountId) + ', que é ' + (at === 'savings' ? 'poupança' : 'conta corrente') + '. Mova esta importação para um cartão de crédito.',
+            months, accountId: i.accountId, importIds: [i.id], action: { type: 'move-import', label: 'Mover importação', importId: i.id } });
+        }
+      }
+      for (const acc of Object.keys(kindsBy)) {
+        const k = kindsBy[acc];
+        if (k.extrato.length && k.fatura.length) {
+          const wrong = typeOf(acc) === 'credit_card' ? k.extrato : k.fatura;
+          push({ id: 'b:mixed:' + acc, severity: 'warning', title: accName(acc) + ' mistura extrato e fatura',
+            detail: 'Esta conta tem ' + k.extrato.length + ' extrato' + (k.extrato.length > 1 ? 's' : '') + ' bancário' + (k.extrato.length > 1 ? 's' : '') + ' e ' + k.fatura.length + ' fatura' + (k.fatura.length > 1 ? 's' : '') + ' de cartão. Cada tipo precisa da sua conta: separe as importações.',
+            months: [...new Set(k.extrato.concat(k.fatura).flatMap(i => i.list.map(t => monthOf(t.date))))].sort(), accountId: acc,
+            importIds: k.extrato.concat(k.fatura).map(i => i.id), action: wrong.length ? { type: 'move-import', label: 'Mover importação', importId: wrong[0].id } : undefined });
+        }
+      }
+    });
+
+    // c. bank-side fatura payments vs imported faturas
+    run('c', () => {
+      const faturas = impInfo.filter(i => i.kind === 'fatura' || (!i.kind && typeOf(i.accountId) === 'credit_card'))
+        .map(i => ({ i, total: -i.list.filter(t => t.kind !== 'card_payment').reduce((s, t) => s + t.amount, 0), to: i.to, from: i.from }))
+        .filter(f => f.total > 0);
+      const extratos = impInfo.filter(i => i.kind === 'extrato' || (!i.kind && typeOf(i.accountId) !== 'credit_card' && typeOf(i.accountId) !== 'payslip'));
+      const pays = txs.filter(t => t.kind === 'card_payment' && t.amount < 0 && (kindOfTx(t) === 'extrato' || (kindOfTx(t) !== 'fatura' && typeOf(t.accountId) !== 'credit_card')))
+        .sort((a, b) => a.date.localeCompare(b.date));
+      const used = new Set(), matched = new Set();
+      const inWindow = (p, f) => { const d = dayNum(p.date) - dayNum(f.to); return d >= -3 && d <= 45; };
+      // exact amounts first (anywhere in the window), then the closest unused fatura by date
+      for (const p of pays) {
+        const f = faturas.find(f => !used.has(f) && inWindow(p, f) && Math.abs(f.total + p.amount) <= 100);
+        if (f) { used.add(f); matched.add(p); }
+      }
+      for (const p of pays) {
+        if (matched.has(p)) continue;
+        const cands = faturas.filter(f => !used.has(f) && inWindow(p, f)).sort((a, b) => Math.abs(dayNum(p.date) - dayNum(a.to) - 8) - Math.abs(dayNum(p.date) - dayNum(b.to) - 8));
+        const pm = monthOf(p.date);
+        if (cands.length) {
+          const f = cands[0]; used.add(f); matched.add(p);
+          push({ id: 'c:mismatch:' + p.id, severity: 'warning', title: 'Pagamento não bate com a fatura',
+            detail: 'O pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ' difere em ' + formatBRL(Math.abs(f.total + p.amount)) + ' do total da fatura importada ("' + f.i.name + '", ' + formatBRL(f.total) + '). Pode faltar lançamento na fatura (IOF, juros, uma compra) ou o pagamento ter sido parcial.',
+            months: [monthOf(f.to)], accountId: f.i.accountId, importIds: [f.i.id, p.importId].filter(Boolean) });
+        } else {
+          const miss = addMonths(pm, -1);
+          const cardAcc = accounts.find(a => a.type === 'credit_card');
+          push({ id: 'c:no-fatura:' + p.id, severity: 'blocking', title: 'Pagamento de fatura sem a fatura',
+            detail: 'Há um pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ', mas nenhuma fatura importada fecha nesse período. As compras dessa fatura (provavelmente de ' + fmtM(miss) + ') não estão no app.',
+            months: [miss], accountId: cardAcc ? cardAcc.id : undefined, importIds: [p.importId].filter(Boolean),
+            action: { type: 'import', label: 'Importar fatura de ' + monthName(miss), accountId: cardAcc ? cardAcc.id : null, month: miss } });
+        }
+      }
+      // reverse: a fatura whose payment never shows up although an extrato covers the period
+      for (const f of faturas) {
+        if (used.has(f)) continue;
+        const wStart = f.to, wEnd = shiftDateMonths(f.to, 1);
+        const covered = extratos.some(e => e.from <= addDays(wStart, 3) && e.to >= addDays(wStart, 20));
+        if (!covered) continue;
+        const anyPay = txs.some(t => t.kind === 'card_payment' && t.amount < 0 && t.date >= addDays(wStart, -3) && t.date <= wEnd && kindOfTx(t) !== 'fatura');
+        if (anyPay) continue;
+        push({ id: 'c:no-payment:' + f.i.id, severity: 'warning', title: 'Fatura sem pagamento no extrato',
+          detail: 'A fatura "' + f.i.name + '" (' + formatBRL(f.total) + ', fecha em ' + f.to.split('-').reverse().join('/') + ') não tem pagamento no extrato, que cobre esse período. Talvez tenha sido paga por outra conta que não está no app.',
+          months: [monthOf(f.to)], accountId: f.i.accountId, importIds: [f.i.id] });
+      }
+    });
+
+    // d. running-balance breaks inside an import, and between consecutive imports of one account
+    run('d', () => {
+      const chains = [];
+      for (const i of impInfo) {
+        const rows = i.list.filter(t => t.balance != null && t.rowIndex != null).sort((a, b) => a.rowIndex - b.rowIndex);
+        if (rows.length < 2 || rows.length < i.list.length * 0.5) continue;
+        let fw = 0, bw = 0;
+        for (let k = 1; k < rows.length; k++) {
+          if (Math.abs(rows[k - 1].balance + rows[k].amount - rows[k].balance) <= 1) fw++;
+          if (Math.abs(rows[k].balance + rows[k - 1].amount - rows[k - 1].balance) <= 1) bw++;
+        }
+        const seq = bw > fw ? rows.slice().reverse() : rows; // chronological order
+        const other = txs.filter(t => t.accountId === i.accountId && t.importId !== i.id);
+        const breaks = [];
+        for (let k = 1; k < seq.length; k++) {
+          const a = seq[k - 1], b = seq[k];
+          const diff = b.balance - b.amount - a.balance;
+          if (Math.abs(diff) <= 1) continue;
+          // rows removed as duplicates of another import still moved the balance
+          const explained = other.filter(t => t.date >= a.date && t.date <= b.date).reduce((s, t) => s + t.amount, 0);
+          if (Math.abs(explained - diff) <= 1) continue;
+          breaks.push({ a, b, diff });
+        }
+        if (breaks.length) {
+          const months = [...new Set(breaks.map(x => monthOf(x.b.date)))].sort();
+          push({ id: 'd:break:' + i.id, severity: 'blocking', title: 'Saldo não fecha: faltam lançamentos',
+            detail: 'Em "' + i.name + '", o saldo pula ' + breaks.length + ' vez' + (breaks.length > 1 ? 'es' : '') + ' (ex.: entre ' + breaks[0].a.date.split('-').reverse().join('/') + ' e ' + breaks[0].b.date.split('-').reverse().join('/') + ', diferença de ' + formatBRL(breaks[0].diff) + '). Linhas do extrato ficaram de fora — confira se o arquivo está completo.',
+            months, accountId: i.accountId, importIds: [i.id] });
+        }
+        chains.push({ i, first: seq[0], last: seq[seq.length - 1] });
+      }
+      const byAcc = {};
+      for (const c of chains) (byAcc[c.i.accountId] = byAcc[c.i.accountId] || []).push(c);
+      for (const acc of Object.keys(byAcc)) {
+        const cs = byAcc[acc].sort((a, b) => a.first.date.localeCompare(b.first.date));
+        for (let k = 1; k < cs.length; k++) {
+          const A = cs[k - 1], B = cs[k];
+          if (B.first.date < A.last.date) continue; // overlapping: dedupe handles it
+          const opening = B.first.balance - B.first.amount;
+          if (Math.abs(opening - A.last.balance) <= 1) continue;
+          push({ id: 'd:gap:' + A.i.id + ':' + B.i.id, severity: 'blocking', title: 'Saldo não continua entre dois extratos',
+            detail: '"' + A.i.name + '" termina com saldo ' + formatBRL(A.last.balance) + ' e "' + B.i.name + '" começa a partir de ' + formatBRL(opening) + '. Faltam lançamentos entre ' + A.last.date.split('-').reverse().join('/') + ' e ' + B.first.date.split('-').reverse().join('/') + '.',
+            months: [...new Set([monthOf(A.last.date), monthOf(B.first.date)])], accountId: acc, importIds: [A.i.id, B.i.id] });
+        }
+      }
+    });
+
+    // e. extrato coverage starting/ending mid-month
+    run('e', () => {
+      const byAcc = {};
+      for (const i of impInfo) if (i.kind === 'extrato' || (!i.kind && typeOf(i.accountId) && typeOf(i.accountId) !== 'credit_card')) (byAcc[i.accountId] = byAcc[i.accountId] || []).push(i);
+      for (const acc of Object.keys(byAcc)) {
+        const iv = byAcc[acc].map(i => [i.from, i.to]).sort((a, b) => a[0].localeCompare(b[0]));
+        const merged = [];
+        for (const [f, t] of iv) {
+          const last = merged[merged.length - 1];
+          if (last && dayNum(f) <= dayNum(last[1]) + 3) { if (t > last[1]) last[1] = t; } else merged.push([f, t]);
+        }
+        const partial = new Map();
+        for (const [f, t] of merged) {
+          if (+f.slice(8, 10) > 2) partial.set(monthOf(f), 'começa em ' + f.split('-').reverse().join('/'));
+          const fm = monthOf(t), last = daysInMonth(+t.slice(0, 4), +t.slice(5, 7));
+          if (+t.slice(8, 10) < last - 2) partial.set(fm, (partial.has(fm) && monthOf(f) === fm ? partial.get(fm) + ' e ' : '') + 'termina em ' + t.split('-').reverse().join('/'));
+        }
+        for (const [m, why] of partial) {
+          push({ id: 'e:partial:' + acc + ':' + m, severity: 'blocking', title: fmtM(m).replace(/^./, c => c.toUpperCase()) + ' incompleto em ' + accName(acc),
+            detail: 'O extrato de ' + accName(acc) + ' ' + why + (m === curMonth ? ' (mês em andamento)' : '') + '. O mês não está inteiro no app, então o saldo dele não entra no déficit acumulado.',
+            months: [m], accountId: acc, importIds: byAcc[acc].map(i => i.id) });
+        }
+      }
+    });
+
+    // f. transfers to/from the user's own name at institutions with no account in the app
+    run('f', () => {
+      const owners = (settings.ownerNames || []).filter(Boolean);
+      const cps = [];
+      for (const t of txs) {
+        if (t.kind === 'card_payment') continue;
+        const c = counterpartyOf(t);
+        if (c && !COMPANY_RE.test(c.name)) cps.push({ t, c });
+      }
+      if (owners.length) {
+        const own = cps.filter(x => owners.some(o => nameMatches(x.c.name, o)));
+        const unmatched = own.filter(x => !txs.some(o => o.accountId !== x.t.accountId && o.amount === -x.t.amount && Math.abs(dayNum(o.date) - dayNum(x.t.date)) <= 3));
+        const notTransfer = unmatched.filter(x => x.t.kind !== 'transfer');
+        if (unmatched.length) {
+          const months = [...new Set(unmatched.map(x => monthOf(x.t.date)))].sort();
+          push({ id: 'f:own:' + months.join(','), severity: 'warning', title: 'Dinheiro indo e vindo de outra conta sua',
+            detail: unmatched.length + ' Pix/TED em seu nome (' + formatBRL(unmatched.filter(x => x.t.amount > 0).reduce((s, x) => s + x.t.amount, 0)) + ' entrando, ' + formatBRL(-unmatched.filter(x => x.t.amount < 0).reduce((s, x) => s + x.t.amount, 0)) + ' saindo) vêm de ou vão para uma conta sua que não está no app. ' +
+              (notTransfer.length ? notTransfer.length + ' deles conta' + (notTransfer.length > 1 ? 'm' : '') + ' como entrada/gasto. ' : '') + 'Importe essa conta ou marque como transferência.',
+            months, txIds: unmatched.map(x => x.t.id),
+            action: notTransfer.length ? { type: 'mark-transfer', label: 'Marcar como transferência', txIds: notTransfer.map(x => x.t.id) } : { type: 'import', label: 'Importar a outra conta' } });
+        }
+      } else {
+        const freq = new Map();
+        for (const x of cps) { const k = x.c.name; const f = freq.get(k) || { n: 0, in: 0, out: 0, months: new Set() }; f.n++; f[x.c.dir === 'in' ? 'in' : 'out']++; f.months.add(monthOf(x.t.date)); freq.set(k, f); }
+        const best = [...freq.entries()].filter(([k, f]) => f.n >= 2 && k.split(' ').length >= 2).sort((a, b) => (b[1].in && b[1].out ? 1 : 0) - (a[1].in && a[1].out ? 1 : 0) || b[1].n - a[1].n)[0];
+        if (best) {
+          push({ id: 'f:ask:' + hashStr(best[0]), severity: 'info', title: 'Estas transferências são suas?',
+            detail: best[1].n + ' Pix/TED ' + (best[1].in && best[1].out ? 'de e para' : best[1].in ? 'recebidos de' : 'enviados para') + ' "' + best[0] + '". Se for você mesmo (outra conta sua), elas não são renda nem gasto.',
+            months: [...best[1].months].sort(), action: { type: 'owner-name', label: 'Isto é você?', name: best[0] } });
+        }
+      }
+    });
+
+    // g. recurring salary-like income missing in a month that has other data
+    run('g', () => {
+      const groups = new Map();
+      for (const t of all) {
+        if (t.kind !== 'income' || !(t.amount >= 50000)) continue;
+        const sal = String(t.categoryId || '') === 'renda.salario' || /\bSALARIO\b|PROVENTOS|FOLHA/.test(norm(t.rawDescription));
+        if (!sal) continue;
+        const k = t.payslip ? 'payslip' : 'salario';
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(t);
+      }
+      for (const [k, list] of groups) {
+        const ms = new Set(list.map(t => monthOf(t.date)));
+        const typDay = list.map(t => +t.date.slice(8, 10)).sort((a, b) => a - b)[Math.floor(list.length / 2)];
+        const months = [...dataMonths].sort();
+        for (const m of months) {
+          if (ms.has(m)) continue;
+          const prev = [1, 2, 3].filter(j => ms.has(addMonths(m, -j))).length;
+          if (prev < 2) continue;
+          const lastDay = maxDateInMonth[m];
+          if (!lastDay || +lastDay.slice(8, 10) < Math.min(28, typDay + 5)) continue; // month not seen past the usual pay day
+          // paid early, at the end of the previous month?
+          const early = list.some(t => monthOf(t.date) === addMonths(m, -1) && +t.date.slice(8, 10) >= 25) && list.filter(t => monthOf(t.date) === addMonths(m, -1)).length >= 2;
+          if (early) continue;
+          push({ id: 'g:salary:' + k + ':' + m, severity: 'warning', title: 'Salário não apareceu em ' + monthName(m),
+            detail: 'Houve salário em ' + prev + ' dos 3 meses anteriores (por volta do dia ' + typDay + '), mas nada em ' + fmtM(m) + ', que tem outros lançamentos. Falta importar a conta onde ele caiu?',
+            months: [m], action: { type: 'import', label: 'Importar extrato de ' + monthName(m), month: m } });
+        }
+      }
+    });
+
+    // h. recurring subscription (same merchant, ±10%, ≥3 consecutive months) missing the next month
+    run('h', () => {
+      const by = new Map();
+      for (const t of txs) {
+        if (t.kind !== 'expense' || t.amount >= 0 || t.installment) continue;
+        const k = t.accountId + '|' + norm(t.merchant || t.rawDescription);
+        if (!by.has(k)) by.set(k, []);
+        by.get(k).push(t);
+      }
+      for (const [k, list] of by) {
+        const byM = {};
+        for (const t of list) (byM[monthOf(t.date)] = byM[monthOf(t.date)] || []).push(t);
+        const ms = Object.keys(byM).sort();
+        if (ms.length < 3) continue;
+        const acc = list[0].accountId;
+        // longest run of consecutive months with one similar amount
+        let run0 = [ms[0]];
+        const runs = [];
+        for (let i = 1; i < ms.length; i++) { if (ms[i] === addMonths(ms[i - 1], 1)) run0.push(ms[i]); else { runs.push(run0); run0 = [ms[i]]; } }
+        runs.push(run0);
+        for (const r of runs) {
+          if (r.length < 3) continue;
+          const amts = r.map(m => Math.abs(byM[m][0].amount));
+          const med = amts.slice().sort((a, b) => a - b)[Math.floor(amts.length / 2)];
+          if (!amts.every(a => Math.abs(a - med) <= med * 0.1)) continue;
+          const next = addMonths(r[r.length - 1], 1);
+          const typDay = +byM[r[r.length - 1]][0].date.slice(8, 10);
+          const accMax = txs.filter(t => t.accountId === acc && monthOf(t.date) === next).map(t => t.date).sort().pop();
+          if (!accMax || +accMax.slice(8, 10) < Math.min(28, typDay + 3)) continue;
+          const name = list[0].merchant || list[0].rawDescription;
+          push({ id: 'h:sub:' + hashStr(k) + ':' + next, severity: 'info', title: 'Assinatura não apareceu: ' + name,
+            detail: name + ' cobrou cerca de ' + formatBRL(med) + ' em ' + r.length + ' meses seguidos, mas não aparece em ' + fmtM(next) + ' em ' + accName(acc) + '. Foi cancelada, mudou de cartão ou falta algo na importação?',
+            months: [next], accountId: acc });
+        }
+      }
+    });
+
+    // i. payslip net vs bank deposit (±5 days), and salary deposits with no payslip
+    run('i', () => {
+      const slips = all.filter(t => t.payslip && t.payslipNet > 0 && (t.payslipRole === 'gross' || t.payslipRole === 'net' || t.payslipRole === 'advance'));
+      if (!slips.length) return;
+      const deposits = txs.filter(t => t.amount > 0 && (t.kind === 'income' || t.kind === 'transfer'));
+      const usedD = new Set();
+      for (const s of slips) {
+        const tol = Math.max(100, Math.round(s.payslipNet * 0.01));
+        const d = deposits.find(t => !usedD.has(t) && Math.abs(t.amount - s.payslipNet) <= tol && Math.abs(dayNum(t.date) - dayNum(s.date)) <= 5);
+        if (d) { usedD.add(d); continue; }
+        const covered = dataMonths.has(monthOf(s.date)) && (maxDateInMonth[monthOf(s.date)] || '') >= addDays(s.date, 5);
+        if (!covered) continue;
+        push({ id: 'i:slip:' + s.id, severity: 'warning', title: 'Holerite sem depósito correspondente',
+          detail: 'O holerite indica ' + formatBRL(s.payslipNet) + (s.payslipRole === 'advance' ? ' de adiantamento' : ' líquido') + ' em ' + s.date.split('-').reverse().join('/') + ', mas nenhum depósito com esse valor aparece até 5 dias antes ou depois. Confira o valor do holerite ou importe a conta onde o salário caiu.',
+          months: [monthOf(s.date)] });
+      }
+      for (const t of txs) {
+        if (usedD.has(t) || t.kind !== 'income' || String(t.categoryId || '') !== 'renda.salario') continue;
+        if (!slips.some(s => monthOf(s.date) === monthOf(t.date) || Math.abs(dayNum(s.date) - dayNum(t.date)) <= 40)) continue;
+        push({ id: 'i:dep:' + t.id, severity: 'info', title: 'Depósito de salário sem holerite',
+          detail: 'O depósito de ' + formatBRL(t.amount) + ' em ' + t.date.split('-').reverse().join('/') + ' está como salário, mas não bate com nenhum holerite lançado (±5 dias). Ele pode estar sendo contado duas vezes.',
+          months: [monthOf(t.date)], accountId: t.accountId });
+      }
+    });
+
+    // j. overlapping imports of one account: dedupe worked / suspicious near-duplicates left
+    run('j', () => {
+      const byAcc = {};
+      for (const i of impInfo) (byAcc[i.accountId] = byAcc[i.accountId] || []).push(i);
+      for (const acc of Object.keys(byAcc)) {
+        const list = byAcc[acc];
+        for (let x = 0; x < list.length; x++) for (let y = x + 1; y < list.length; y++) {
+          const A = list[x], B = list[y];
+          const from = A.from > B.from ? A.from : B.from, to = A.to < B.to ? A.to : B.to;
+          if (from > to) continue;
+          const bIdx = new Map();
+          for (const t of B.list) { if (t.date < addDays(from, -2) || t.date > addDays(to, 2)) continue; const k = t.amount; if (!bIdx.has(k)) bIdx.set(k, []); bIdx.get(k).push(t); }
+          const sus = [];
+          const usedB = new Set();
+          for (const a of A.list) {
+            if (a.date < addDays(from, -2) || a.date > addDays(to, 2) || a.kind === 'card_payment') continue;
+            const hit = (bIdx.get(a.amount) || []).find(b => !usedB.has(b) && Math.abs(dayNum(a.date) - dayNum(b.date)) <= 2 && sameInstallment(a, b) && merchantSimilar(a.merchant || a.rawDescription, b.merchant || b.rawDescription));
+            if (hit) { usedB.add(hit); sus.push([a, hit]); }
+          }
+          const dupN = (A.rec.duplicates || 0) + (B.rec.duplicates || 0);
+          const months = [...new Set([monthOf(from), monthOf(to)])];
+          if (sus.length) {
+            push({ id: 'j:dups:' + A.id + ':' + B.id, severity: 'warning', title: 'Possíveis lançamentos repetidos',
+              detail: '"' + A.name + '" e "' + B.name + '" cobrem os mesmos dias (' + from.split('-').reverse().join('/') + ' a ' + to.split('-').reverse().join('/') + ') e ' + sus.length + ' lançamento' + (sus.length > 1 ? 's parecem estar' : ' parece estar') + ' nas duas (mesmo valor, data e estabelecimento). Confira em Transações e exclua o repetido.',
+              months, accountId: acc, importIds: [A.id, B.id], txIds: sus.flat().map(t => t.id) });
+          } else if (dupN) {
+            push({ id: 'j:ok:' + A.id + ':' + B.id, severity: 'info', title: 'Importações sobrepostas (sem repetição)',
+              detail: '"' + A.name + '" e "' + B.name + '" cobrem os mesmos dias; ' + dupN + ' lançamento' + (dupN > 1 ? 's repetidos foram ignorados' : ' repetido foi ignorado') + ' na importação. Nada a fazer.',
+              months, accountId: acc, importIds: [A.id, B.id] });
+          }
+        }
+      }
+    });
+
+    // k. parcela n present, n-1 missing although that period was imported for the account
+    run('k', () => {
+      const series = new Map();
+      for (const t of txs) {
+        const s = installmentSeries(t);
+        if (!s || t.kind === 'card_payment') continue;
+        const k = t.accountId + '|' + s.merchant + '|' + s.start + '|' + s.total;
+        let g = series.get(k);
+        if (!g) series.set(k, g = []);
+        g.push({ t, s });
+      }
+      const covered = (acc, date) => impInfo.some(i => i.accountId === acc && i.kind !== 'extrato' && i.from <= date && i.to >= date);
+      for (const [k, g] of series) {
+        const ns = new Set(g.map(x => x.s.n));
+        const acc = g[0].t.accountId;
+        const missing = [];
+        for (const x of g) {
+          const n = x.s.n;
+          if (n <= 1 || ns.has(n - 1)) continue;
+          const expected = shiftDateMonths(x.s.start, n - 2);
+          if (covered(acc, expected)) missing.push({ n: n - 1, date: expected, x });
+        }
+        if (!missing.length) continue;
+        const x0 = missing[0].x;
+        push({ id: 'k:parc:' + hashStr(k) + ':' + missing.map(m => m.n).join(','), severity: 'warning', title: 'Parcela faltando: ' + (x0.t.merchant || x0.t.rawDescription),
+          detail: 'A compra de ' + x0.s.start.split('-').reverse().join('/') + ' em ' + x0.s.total + 'x tem a parcela ' + x0.s.n + '/' + x0.s.total + ', mas não a ' + missing.map(m => m.n + '/' + x0.s.total).join(', ') + ', embora a fatura desse período esteja importada. Confira se a linha foi lida.',
+          months: [...new Set(missing.map(m => monthOf(m.date)))], accountId: acc, txIds: g.map(y => y.t.id) });
+      }
+    });
+
+    // l. large uncategorized share of a month's spending
+    run('l', () => {
+      const by = {};
+      for (const t of effective(all)) {
+        if (t.kind !== 'expense') continue;
+        const m = monthOf(t.date);
+        const r = by[m] || (by[m] = { exp: 0, unc: 0 });
+        r.exp -= t.amount;
+        if (!t.categoryId) r.unc -= t.amount;
+      }
+      for (const m of Object.keys(by).sort()) {
+        const r = by[m];
+        if (r.exp > 0 && r.unc > r.exp * 0.25) {
+          push({ id: 'l:uncat:' + m, severity: 'info', title: Math.round(r.unc / r.exp * 100) + '% dos gastos de ' + monthName(m) + ' sem categoria',
+            detail: formatBRL(r.unc) + ' de ' + formatBRL(r.exp) + ' em ' + fmtM(m) + ' ainda não têm categoria. O fluxo do painel fica impreciso até você classificar.',
+            months: [m], action: { type: 'triage', label: 'Classificar agora' } });
+        }
+      }
+    });
+
+    const rank = { blocking: 0, warning: 1, info: 2 };
+    out.sort((a, b) => rank[a.severity] - rank[b.severity] || String((a.months || [])[0] || '').localeCompare(String((b.months || [])[0] || '')) || a.id.localeCompare(b.id));
+    out.errors = errors;
+    return out;
+  }
+  function addDays(iso, k) { const d = new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + k)); return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()); }
+  /** Months that data-health says are incomplete (blocking warnings), for the carry-over. -> { 'YYYY-MM': [titles] } */
+  function blockingMonths(warnings) {
+    const out = {};
+    for (const w of warnings || []) if (w && w.severity === 'blocking') for (const m of w.months || []) (out[m] = out[m] || []).push(w.title);
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
   // AI prompt + validation
   // ---------------------------------------------------------------------------
   function buildAIPrompt(analysis) {
@@ -2339,7 +3090,7 @@
 
   // ---------------------------------------------------------------------------
   const FinEngine = {
-    version: '2.0.0',
+    version: '2.1.0',
     decodeBytes, analyzeTable, analyzeRows, profileFromAnalysis, applyProfile, matchProfile,
     parseAmount, detectNumberFormat, parseDate, normalizeDescription,
     DEFAULT_CATEGORIES, DEFAULT_DICTIONARY,
@@ -2349,7 +3100,11 @@
     // v2
     SCHEMA_VERSION, GENERIC_WORDS, kindForCategory, applyCategoryKind, suggestCategories, ambiguousMatch, parseInstallmentText,
     isInstallmentCell, shiftDateMonths, parseTime, payslipSplit, defaultAdvanceDate, guessAccountType, moveImport,
-    tombstonesForImport, backfillImports, migrateData, lookupDictionaryEntry: (d, m, r, a) => lookupDictionaryEntry(d || DEFAULT_DICTIONARY, m, r, a),
+    tombstonesForImport, backfillImports, migrateData,
+    // v2.1
+    CNAE_MAP, suggestFromCNAE, findCNPJ, validCNPJ, formatCNPJ, searchQuery, installmentSeries, rememberInstallmentSeries, pruneSeriesRules, seriesRuleMatches: seriesMatches,
+    carryover, dataHealth, blockingMonths, importKind, monthName,
+    lookupDictionaryEntry: (d, m, r, a) => lookupDictionaryEntry(d || DEFAULT_DICTIONARY, m, r, a),
     // extras (helpers, stable but not part of the contract)
     _internal: { parseDelimited, detectDelimiter, detectDateFormat, norm, stripAccents, hashStr, SKIP_PATTERNS, parseInstallmentText, detectKind }
   };

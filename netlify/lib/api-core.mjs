@@ -17,6 +17,30 @@ const TX_ID_MAX = 200;
 const MAX_CHANGES = 200;
 const MAX_RETRIES = 10;
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
+// consulta de CNPJ (BrasilAPI) — só quando o usuário toca em "Consultar CNPJ"
+export const CNPJ_RATE_PER_HOUR = 30;
+export const CNPJ_CACHE_MS = 30 * 24 * 3600 * 1000;
+export const CNPJ_TIMEOUT_MS = 5000;
+const CNPJ_FIELDS = ['razao_social', 'nome_fantasia', 'cnae_fiscal', 'cnae_fiscal_descricao', 'municipio', 'uf'];
+
+/** 14 dígitos com dígitos verificadores válidos */
+export function validCnpj(d) {
+  if (typeof d !== 'string' || !/^\d{14}$/.test(d) || /^(\d)\1{13}$/.test(d)) return false;
+  const dv = (len) => {
+    const w = len === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    let s = 0; for (let i = 0; i < len; i++) s += Number(d[i]) * w[i];
+    const r = s % 11; return r < 2 ? 0 : 11 - r;
+  };
+  return dv(12) === Number(d[12]) && dv(13) === Number(d[13]);
+}
+function pickCnpj(j) {
+  const out = {};
+  for (const k of CNPJ_FIELDS) {
+    const v = j ? j[k] : null;
+    out[k] = v == null ? null : (k === 'cnae_fiscal' ? (Number.isFinite(Number(v)) ? Number(v) : null) : String(v).slice(0, 200));
+  }
+  return out;
+}
 
 class HttpError extends Error {
   constructor(status, code, extra) { super(code); this.status = status; this.code = code; this.extra = extra; }
@@ -108,7 +132,7 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-export function createHandler({ getUser, getStore, now = () => Date.now(), log = console }) {
+export function createHandler({ getUser, getStore, now = () => Date.now(), log = console, fetch: fetchFn = globalThis.fetch }) {
   if (typeof getUser !== 'function' || typeof getStore !== 'function') throw new Error('createHandler: deps missing');
 
   return async function handler(req, context) {
@@ -235,6 +259,40 @@ export function createHandler({ getUser, getStore, now = () => Date.now(), log =
         }
         const day = out.exportedAt.slice(0, 10);
         return json(200, out, { 'content-disposition': `attachment; filename="financas-flow-backup-${day}.json"` });
+      }
+
+      if (head === 'cnpj') {
+        if (method !== 'GET') return json(405, { error: 'method_not_allowed' }, { allow: 'GET' });
+        if (typeof arg !== 'string' || !validCnpj(arg)) return json(400, { error: 'invalid_cnpj' });
+        // cache por CNPJ (dado público da Receita; chave = só os 14 dígitos validados), 30 dias
+        const cacheKey = `cache/cnpj/${arg}`;
+        const cached = await store.getWithMetadata(cacheKey, { type: 'json', consistency: 'strong' });
+        if (cached && cached.data && nowMs - Number(cached.data.at || 0) < CNPJ_CACHE_MS && cached.data.result) {
+          return json(200, Object.assign({ cnpj: arg, cached: true }, pickCnpj(cached.data.result)));
+        }
+        // limite por usuário: 30 consultas por hora (contador em blob, chave derivada só do id verificado)
+        const hour = Math.floor(nowMs / 3600000);
+        const rl = await casUpdate(`${prefix}ratelimit/cnpj`, (cur) => {
+          const n = cur && cur.hour === hour ? Number(cur.n) || 0 : 0;
+          if (n >= CNPJ_RATE_PER_HOUR) return { abort: true };
+          return { doc: { hour, n: n + 1 } };
+        });
+        if (rl.abort) return json(429, { error: 'rate_limited', retryAfter: (hour + 1) * 3600 - Math.floor(nowMs / 1000) }, { 'retry-after': String((hour + 1) * 3600 - Math.floor(nowMs / 1000)) });
+        if (typeof fetchFn !== 'function') return json(502, { error: 'upstream_unavailable' });
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), CNPJ_TIMEOUT_MS);
+        let up, body;
+        try {
+          up = await fetchFn(`https://brasilapi.com.br/api/cnpj/v1/${arg}`, { headers: { accept: 'application/json' }, signal: ctl.signal });
+          if (up.status === 404) return json(404, { error: 'cnpj_not_found' });
+          if (!up.ok) return json(502, { error: 'upstream_unavailable' });
+          body = await up.json();
+        } catch {
+          return ctl.signal.aborted ? json(504, { error: 'upstream_timeout' }) : json(502, { error: 'upstream_unavailable' });
+        } finally { clearTimeout(timer); }
+        const result = pickCnpj(body);
+        try { await store.setJSON(cacheKey, { at: nowMs, result }); } catch { /* cache é opcional */ }
+        return json(200, Object.assign({ cnpj: arg, cached: false }, result));
       }
 
       if (head === 'meta') {

@@ -235,7 +235,17 @@ def scenario_main(b):
     check(unc0 >= 3, f'triage backlog ({unc0})')
     pg.click('#triage-banner [data-act="triage"]')
     pg.wait_for_selector('#tri-card')
-    check(pg.is_checked('#tri-remember'), '"Lembrar esta categoria" checked by default')
+    # v2.1: an unticked "Lembrar" on a parcela creates a per-purchase rule — the rule checks below use a non-parcela card
+    # (skipped parcelas are classified in a second pass at the end); ambiguous merchants start unticked
+    skipped = 0
+    for _ in range(40):
+        c = J(pg, '() => { const id = document.querySelector("#tri-card").dataset.id; const t = __ff.live().find(t => t.id === id); return { inst: !!t.installment, amb: !!FinEngine.ambiguousMatch(t, {}) }; }')
+        if not c['inst']:
+            break
+        pg.click('[data-act="tri-skip"]')
+        skipped += 1
+    check(pg.is_checked('#tri-remember') == (not c['amb']), '"Lembrar esta categoria" ticked by default (unticked for an ambiguous merchant)')
+    pg.check('#tri-remember')
     shot(pg, 'triage-light')
 
     def current():
@@ -269,6 +279,17 @@ def scenario_main(b):
         else:
             pg.click('.tri-grid [data-act="tri-group"]')
             pg.click('.tri-grid [data-act="tri-pick"]')
+    if skipped and J(pg, '() => __ff.live().filter(t => !t.categoryId && t.kind !== "transfer" && t.kind !== "card_payment").length'):
+        # second pass for the parcelas skipped at the start
+        pg.click('#tri-finish'); pg.wait_for_timeout(200)
+        pg.click('#triage-banner [data-act="triage"]'); pg.wait_for_selector('#tri-card')
+        while pg.is_visible('#tri-card') and guard < 400:
+            guard += 1
+            if pg.is_visible('#tri-sugs .sug-btn'):
+                pg.click('#tri-sugs .sug-btn')
+            else:
+                pg.click('.tri-grid [data-act="tri-group"]')
+                pg.click('.tri-grid [data-act="tri-pick"]')
     check(pg.is_visible('#tri-done'), f'triage queue finished ({guard} picks)')
     pg.click('#tri-finish')
     pg.wait_for_timeout(200)

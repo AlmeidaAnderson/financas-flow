@@ -62,6 +62,12 @@ const api = createHandler({
   },
   getStore: () => blobs,
   log: { error: (...a) => console.error('[api]', ...a) },
+  // test-only stand-in for BrasilAPI (no network in tests): one known CNPJ, everything else 404
+  fetch: async (url) => {
+    globalThis.__cnpjCalls = (globalThis.__cnpjCalls || 0) + 1;
+    if (/\/11222333000181$/.test(url)) return new Response(JSON.stringify({ cnpj: '11222333000181', razao_social: 'DROGARIA EXEMPLO LTDA', nome_fantasia: 'DROGA EXEMPLO', cnae_fiscal: 4771701, cnae_fiscal_descricao: 'Comércio varejista de produtos farmacêuticos, sem manipulação de fórmulas', municipio: 'SAO PAULO', uf: 'SP', qsa: [{ nome_socio: 'NÃO DEVE APARECER' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response('{"message":"not found"}', { status: 404 });
+  },
 });
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.svg': 'image/svg+xml' };

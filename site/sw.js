@@ -7,7 +7,7 @@
  */
 'use strict';
 // Ao trocar um arquivo em /vendor ou /icons (sem mudar o nome), aumente VERSION.
-const VERSION = 'ff-v2-2';
+const VERSION = 'ff-v2-3';
 const SHELL = `${VERSION}-shell`;
 const STATIC = `${VERSION}-static`;
 const PRECACHE = [

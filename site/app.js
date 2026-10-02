@@ -17,8 +17,8 @@ const MES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho'
 const MES3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const KIND_LBL = { expense: 'Saída', income: 'Entrada', transfer: 'Transferência', card_payment: 'Pagamento de fatura', investment: 'Investimento' };
 const TYPE_FILTER_LBL = { expense: 'Gasto', income: 'Entrada', transfer: 'Transferência', card_payment: 'Pagamento de fatura', investment: 'Investimento' };
-const SRC_LBL = { rule: 'regra', learned: 'aprendido', dictionary: 'dicionário', ai: 'IA', manual: 'manual' };
-const SRC_FILTER = [['rule', 'Regra'], ['learned', 'Aprendido'], ['dictionary', 'Dicionário'], ['manual', 'Manual'], ['none', 'Sem categoria']];
+const SRC_LBL = { rule: 'regra', learned: 'aprendido', dictionary: 'dicionário', ai: 'IA', manual: 'manual', series: 'lembrado p/ esta compra' };
+const SRC_FILTER = [['rule', 'Regra'], ['learned', 'Aprendido'], ['series', 'Compra parcelada lembrada'], ['dictionary', 'Dicionário'], ['manual', 'Manual'], ['none', 'Sem categoria']];
 const ACC_TYPES = { credit_card: 'Cartão de crédito', checking: 'Conta corrente', savings: 'Poupança', cash: 'Dinheiro', payslip: 'Holerite' };
 const ROLE_LBL = { ignore: 'Ignorar', date: 'Data', time: 'Hora', description: 'Descrição', amount: 'Valor', debit: 'Débito', credit: 'Crédito', dcFlag: 'Indicador D/C', installment: 'Parcela', balance: 'Saldo (ignorar)' };
 const SIGN_LBL = { negative_is_expense: 'Negativos = gasto', positive_is_expense: 'Compras positivas = gasto', dc_flag: 'Coluna D/C', split_columns: 'Débito e crédito separados' };
@@ -140,6 +140,74 @@ const isUncat = t => !t.categoryId && countable(t);
 const kindFor = catId => (E && E.kindForCategory ? E.kindForCategory(catId, D().categories) : null);
 const uncatCount = () => live().filter(isUncat).length;
 
+/* ---------- v2.1: settings, data health (memoized per data version), deficit carry-over ---------- */
+const SEV_LBL = { blocking: 'Bloqueia o mês', warning: 'Atenção', info: 'Info' };
+function settingsObj() { const d = D(); if (!d.settings) d.settings = { budgets: {} }; return d.settings; }
+/** changes settings (synced meta doc), stamps updatedAt, persists and re-renders */
+function updateSettings(fn, opts) { const st = settingsObj(); fn(st); st.updatedAt = nowISO(); commit(Object.assign({ meta: ['settings'] }, opts || {})); }
+function carrySettings() {
+  const c = settingsObj().carry || {};
+  return { enabled: c.enabled !== false, startMonth: c.startMonth || null, excluded: Array.isArray(c.excluded) ? c.excluded : [], included: Array.isArray(c.included) ? c.included : [] };
+}
+const fmtYm = ym => { const [y, m] = String(ym).split('-').map(Number); return (MES[m - 1] || ym) + ' ' + (y || ''); };
+const _memo = { health: { key: null, list: [] }, carry: { key: null, v: null } };
+function memoKey() { return S.ver + '|' + S.mode + '|' + (D().txs || []).length; }
+/** data-health warnings (dismissed ones filtered by the engine); recomputed only when the data version changes */
+function health() {
+  const k = memoKey();
+  if (_memo.health.key === k) return _memo.health.list;
+  const d = D();
+  const list = eng('dataHealth', { transactions: live(), accounts: d.accounts || [], imports: d.imports || {}, settings: d.settings || {} }) || [];
+  if (list.errors && list.errors.length) console.error('dataHealth', list.errors);
+  _memo.health = { key: k, list };
+  return list;
+}
+function healthWorst(ws) { return ws.some(w => w.severity === 'blocking') ? 'blocking' : ws.some(w => w.severity === 'warning') ? 'warning' : ws.length ? 'info' : 'ok'; }
+function dataMonthsList() { return [...new Set(live().map(t => ymOf(t.date)).filter(m => /^\d{4}-\d{2}$/.test(m)))].sort(); }
+/** { enabled, start, autoStart, rows, auto:{month:[reasons]}, excluded:Set, manual:Set } */
+function carryInfo() {
+  const k = memoKey();
+  if (_memo.carry.key === k) return _memo.carry.v;
+  const cs = carrySettings();
+  const months = dataMonthsList();
+  const auto = eng('blockingMonths', health()) || {};
+  const autoStart = months.find(m => !auto[m]) || months[0] || null;
+  const start = cs.startMonth && months.length && cs.startMonth <= months[months.length - 1] ? cs.startMonth : autoStart;
+  const excluded = new Set(cs.excluded.concat(Object.keys(auto).filter(m => !cs.included.includes(m))));
+  const end = months.length ? months[months.length - 1] : null;
+  const rows = start && end ? (eng('carryover', live(), { startMonth: start, endMonth: end, enabled: cs.enabled, excludedMonths: [...excluded], accounts: D().accounts || [] }) || []) : [];
+  const v = { enabled: cs.enabled, start, autoStart, rows, auto, excluded, manual: new Set(cs.excluded), included: new Set(cs.included), months };
+  _memo.carry = { key: k, v };
+  return v;
+}
+/** "Mês incompleto — não transportar": on = leave the month out of the carry-over */
+function setMonthExcluded(m, on) {
+  const ci = carryInfo();
+  updateSettings(st => {
+    const c = Object.assign({ enabled: true, startMonth: null, excluded: [], included: [] }, st.carry || {});
+    c.excluded = (c.excluded || []).filter(x => x !== m); c.included = (c.included || []).filter(x => x !== m);
+    if (on) { if (!ci.auto[m]) c.excluded.push(m); }
+    else if (ci.auto[m]) c.included.push(m);
+    st.carry = c;
+  });
+}
+/** "Lembrar" default: off for categories the user unticked last time, and for ambiguous dictionary merchants */
+function rememberDefault(t, catId) {
+  if (catId && (settingsObj().rememberOff || []).includes(catId)) return false;
+  if (t && E && E.ambiguousMatch && E.ambiguousMatch(t, ctx())) return false;
+  return true;
+}
+/** remembers an explicit untick (and forgets it when ticked again); returns true when settings changed */
+function noteRememberChoice(catId, remember, def) {
+  if (!catId) return false;
+  const st = settingsObj(); const list = Array.isArray(st.rememberOff) ? st.rememberOff : [];
+  if (!remember && def && !list.includes(catId)) st.rememberOff = list.concat([catId]);
+  else if (remember && list.includes(catId)) st.rememberOff = list.filter(x => x !== catId);
+  else return false;
+  st.updatedAt = nowISO(); P.meta.add('settings');
+  return true;
+}
+
 /* ================= store glue ================= */
 let store = null;
 const META = ['settings', 'categories', 'rules', 'profiles', 'accounts', 'imports'];
@@ -256,6 +324,9 @@ async function loadFromStore(reason) {
   const m = eng('migrateData', d);
   S.real = m && m.data ? m.data : d;
   S.mode = 'real';
+  // installment-series rules whose last parcela already passed
+  const pr = eng('pruneSeriesRules', S.real.rules, todayISO().slice(0, 7));
+  if (pr && pr.removed && canPersist()) { S.real.rules = pr.rules; P.meta.add('rules'); schedulePersist(0); }
   if (m && (m.changedTxIds.length || m.changedMeta.length) && canPersist()) {
     const ids = new Set(m.changedTxIds);
     markMonths(S.real.txs.filter(t => t && ids.has(t.id)));
@@ -327,6 +398,7 @@ let _deferRender = false;
 function renderAfterChange(first, remote) {
   if (first) pickMonth(true);
   renderStorePill(); renderBanner(); renderBadge();
+  try { health(); refreshOpenSheet(); } catch (e) { console.error(e); }
   if (remote) {
     const ae = document.activeElement;
     const scr = $(SCREENS[S.ui.tab]);
@@ -409,6 +481,7 @@ function renderPainel() {
         <button class="icon-btn" type="button" data-act="month" data-d="-1" aria-label="Mês anterior"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg></button>
         <span class="lbl-m" id="period-label">${esc(periodLabel())}</span>
         <button class="icon-btn" type="button" data-act="month" data-d="1" aria-label="Próximo mês"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button class="icon-btn" type="button" data-act="month-menu" id="btn-month-menu" aria-label="Opções do mês"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18.5" cy="12" r="1.7"/></svg></button>
       </div>
       <div class="seg" role="group" aria-label="Período">
         ${[1, 3, 6, 12].map(r => `<button type="button" data-act="range" data-r="${r}" aria-pressed="${S.ui.range === r}">${r === 1 ? 'Mês' : r + 'm'}</button>`).join('')}
@@ -420,6 +493,7 @@ function renderPainel() {
       <div class="kpi" role="listitem"><span class="eyebrow">Saldo</span><span class="v money ${net < 0 ? 'out' : ''}" id="kpi-net" data-cents="${net}">${brl(net)}</span></div>
       <div class="kpi" role="listitem"><span class="eyebrow">Taxa de poupança</span><span class="v num ${rate != null && rate < 0 ? 'out' : ''}">${rate == null ? '—' : (rate * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%'}</span></div>
     </div>
+    <div class="pn-sum" id="pn-sum">${healthChipHTML()}${carryLineHTML()}</div>
     <div class="card" id="sankey-card">
       <div class="card-h">
         <h2>Para onde foi o dinheiro</h2>
@@ -445,10 +519,35 @@ function renderPainel() {
   drawSeries();
   renderFuture();
 }
+/* ---------- Painel summary: data health chip + accumulated deficit ---------- */
+function healthChipHTML(){
+  const ws = health();
+  if(!ws.length && S.mode!=='real') return '';
+  const worst = healthWorst(ws);
+  return `<button type="button" class="hchip sev-${worst}" data-act="health" id="health-chip" data-sev="${worst}" aria-label="Saúde dos dados: ${ws.length} aviso${ws.length===1?'':'s'}"><span class="hdot" aria-hidden="true"></span>Saúde dos dados${ws.length?`<span class="cnt" id="health-count">${ws.length}</span>`:' · tudo certo'}</button>`;
+}
+function carrySince(rows, idx){ let j = idx; while(j>0 && rows[j-1].carryOut>0) j--; return rows[j] ? rows[j].month : null; }
+function carryLineHTML(){
+  const ci = carryInfo(); if(!ci.enabled) return '';
+  const idx = ci.rows.findIndex(r=>r.month===S.ui.month); if(idx<0) return '';
+  const row = ci.rows[idx];
+  if(row.excluded && row.carryOut>0) return `<button type="button" class="carry-line" data-act="carry" id="carry-line"><span>Déficit acumulado: <b class="money out" id="carry-total" data-cents="${row.carryOut}">${brl(row.carryOut)}</b> <span class="muted small">· este mês fica fora da conta</span></span><span aria-hidden="true">›</span></button>`;
+  if(!(row.carryOut>0)) return row.carryIn>0 ? `<button type="button" class="carry-line ok" data-act="carry" id="carry-line"><span>Déficit acumulado quitado neste mês <span class="muted small">(${brl(row.repaid)} pagos)</span></span><span aria-hidden="true">›</span></button>` : '';
+  const since = carrySince(ci.rows, idx);
+  return `<button type="button" class="carry-line" data-act="carry" id="carry-line"><span>Déficit acumulado: <b class="money out" id="carry-total" data-cents="${row.carryOut}">${brl(row.carryOut)}</b> <span class="muted small">(desde ${esc(since ? MES3[+since.slice(5,7)-1]+'/'+since.slice(2,4) : '')})</span></span><span aria-hidden="true">›</span></button>`;
+}
 /* ---------- Sankey ---------- */
+function sankeyCarry(){
+  if(S.ui.range!==1) return null;
+  const ci = carryInfo(); if(!ci.enabled) return null;
+  const row = ci.rows.find(r=>r.month===S.ui.month);
+  if(!row || row.excluded) return null;
+  if(!(row.repaid>0) && !(row.newDeficit>0)) return null;
+  return { month: row.month, repaid: row.repaid, coverage: row.newDeficit>0 ? row.coverage : null };
+}
 function prepareSankey(narrow){
   const p = period();
-  const g = eng('buildSankey', live(), { from:p.from, to:p.to, categories:D().categories, accounts:D().accounts, view:S.ui.view, maxNodes: narrow ? 8 : 14 });
+  const g = eng('buildSankey', live(), { from:p.from, to:p.to, categories:D().categories, accounts:D().accounts, view:S.ui.view, maxNodes: narrow ? 8 : 14, carry: sankeyCarry() });
   if(!g || !Array.isArray(g.nodes) || !g.nodes.length) return null;
   const nodes = g.nodes.map((n,i)=>Object.assign({}, n, { _i:i, id: n.id!=null ? String(n.id) : String(i) }));
   const byId = {}; nodes.forEach(n=>byId[n.id]=n);
@@ -622,11 +721,141 @@ function openNodeSheet(id){
     const sorted = info.txs.slice().sort((a,b)=>b.date.localeCompare(a.date));
     body += `<h3>${sorted.length} lançamento${sorted.length>1?'s':''}</h3><div class="txlist">${sorted.slice(0,80).map(txRow).join('')}</div>`;
     if(sorted.length>80) body += `<p class="small muted">Mostrando 80 de ${sorted.length}. Veja todos em Transações.</p>`;
-  } else if(/sobra|poupan/i.test(node.name)) body += '<p class="muted">É o que sobrou das entradas depois das saídas no período. Investimentos e aplicações entram aqui quando não são classificados como gasto.</p>';
+  } else if(String(node.id)==='carry') body += '<p class="muted">Parte da sobra deste mês que paga o déficit que veio dos meses anteriores. Enquanto houver déficit acumulado, a sobra vai primeiro para ele.</p><div class="row"><button class="btn sm" type="button" data-act="carry">Ver mês a mês</button></div>';
+  else if(/^deficit/.test(String(node.id))) body += `<p class="muted">${({'deficit:card':'Gastos no cartão deste mês que só serão pagos na fatura do mês que vem. Por isso o mês fecha no vermelho sem faltar dinheiro agora.','deficit:inv':'Dinheiro que saiu de investimentos (resgates) para cobrir os gastos do mês.','deficit:bal':'O que faltou e saiu do saldo da conta ou da reserva.'})[node.id] || 'Quanto as saídas passaram das entradas no período.'}</p><div class="row"><button class="btn sm" type="button" data-act="carry">Ver mês a mês</button></div>`;
+  else if(/sobra|poupan/i.test(node.name)) body += '<p class="muted">É o que sobrou das entradas depois das saídas no período. Investimentos e aplicações entram aqui quando não são classificados como gasto.</p>';
   else if(/impost|inss|irrf/i.test(node.name)) body += '<p class="muted">Descontos do holerite (INSS, IRRF e outros). Eles saem do salário bruto antes de o dinheiro chegar na conta.</p>';
   else if(/or[çc]amento/i.test(node.name)) body += '<p class="muted">Tudo o que entrou no período, antes de ser distribuído entre os gastos e a sobra.</p>';
   else body += '<p class="muted">Este bloco agrupa valores sem lançamentos individuais para mostrar aqui.</p>';
   openSheet(`<div><span class="eyebrow">${esc(periodLabel())}</span><h2>${esc(node.name)}</h2><p class="money" style="font-size:1.1rem;font-weight:700">${brl(node.v)}</p></div>`, body);
+}
+
+/* ---------- v2.1 sheets: Saúde dos dados, déficit mês a mês, menu do mês ---------- */
+function refreshOpenSheet(){
+  if(!S.sheet) return;
+  if(S.sheet.kind==='health') renderHealthSheet();
+  else if(S.sheet.kind==='carry') renderCarrySheet();
+  else if(S.sheet.kind==='month') renderMonthMenu();
+  else if(S.sheet.kind==='settings'){ const el = $('#carry-set'); if(el) el.innerHTML = carrySettingsHTML(); }
+}
+function warningById(id){ return health().find(w=>w.id===id) || null; }
+function openHealthSheet(month){
+  S.healthUI = { month: month || null };
+  openSheet('<span class="eyebrow">Painel</span><h2>Saúde dos dados</h2>', '<div id="health-body"></div>', () => { S.healthUI = null; }, { kind:'health', label:'Saúde dos dados' });
+  renderHealthSheet();
+}
+function renderHealthSheet(){
+  const el = $('#health-body'); if(!el) return;
+  const U = S.healthUI || {};
+  const all = health();
+  const ws = U.month ? all.filter(w=>(w.months||[]).includes(U.month)) : all;
+  const nDis = (settingsObj().dismissedWarnings||[]).length;
+  const ci = carryInfo();
+  const cnt = k => all.filter(w=>w.severity===k).length;
+  const groups = new Map();
+  ws.forEach(w=>{ const k = (w.months||[])[0] || ''; if(!groups.has(k)) groups.set(k, []); groups.get(k).push(w); });
+  const keys = [...groups.keys()].sort((a,b)=> a===''?1:b===''?-1:b.localeCompare(a));
+  const card = w => {
+    const blocking = w.severity==='blocking';
+    const ms = (w.months||[]);
+    const done = blocking && ms.length && ms.every(m=>ci.included.has(m));
+    return `<div class="hw sev-${w.severity}" data-wid="${esc(w.id)}">
+      <div class="hw-top"><span class="tag ${w.severity==='blocking'?'err':w.severity==='warning'?'warn':'acc'}">${esc(SEV_LBL[w.severity]||w.severity)}</span>${w.accountId?`<span class="tag">${esc(accName(w.accountId))}</span>`:''}${ms.length>1?`<span class="tag">${esc(ms.map(m=>MES3[+m.slice(5,7)-1]+'/'+m.slice(2,4)).join(', '))}</span>`:''}${done?'<span class="tag ok">mês marcado como completo</span>':''}</div>
+      <b class="hw-t">${esc(w.title)}</b><p class="small muted">${esc(w.detail)}</p>
+      <div class="row">${w.action&&w.action.label?`<button class="btn sm primary" type="button" data-act="hw-act" data-id="${esc(w.id)}">${esc(w.action.label)}</button>`:''}${blocking&&!done&&ms.length?`<button class="btn sm" type="button" data-act="hw-complete" data-id="${esc(w.id)}">Marcar mês como completo</button>`:''}<button class="btn sm ghost" type="button" data-act="hw-dismiss" data-id="${esc(w.id)}">Ignorar aviso</button></div></div>`;
+  };
+  el.innerHTML = `<p class="small muted">O que pode estar faltando ou fora do lugar nos seus dados. Meses com aviso <b>que bloqueia o mês</b> ficam fora do déficit acumulado até você resolver ou marcar o mês como completo.</p>
+    ${all.length?`<div class="row" id="health-sum">${cnt('blocking')?`<span class="tag err">${cnt('blocking')} bloqueia${cnt('blocking')>1?'m':''} o mês</span>`:''}${cnt('warning')?`<span class="tag warn">${cnt('warning')} de atenção</span>`:''}${cnt('info')?`<span class="tag acc">${cnt('info')} info</span>`:''}</div>`:''}
+    ${U.month?`<div class="row"><span class="small">Só ${esc(fmtYm(U.month))}</span><button class="btn sm ghost" type="button" data-act="health-all">Ver todos</button></div>`:''}
+    ${ws.length ? keys.map(k=>`<div class="hw-group"><h3>${esc(k?fmtYm(k):'Geral')}</h3>${groups.get(k).sort((a,b)=>String(a.accountId||'').localeCompare(String(b.accountId||''))).map(card).join('')}</div>`).join('')
+      : `<div class="empty" id="health-empty"><b>Nenhum aviso${U.month?' neste mês':''}.</b><span class="small">Seus dados parecem completos.</span></div>`}
+    ${nDis?`<div class="row"><button class="btn sm ghost" type="button" data-act="hw-undismiss" id="hw-undismiss">Mostrar ${nDis} aviso${nDis>1?'s':''} ignorado${nDis>1?'s':''}</button></div>`:''}`;
+}
+function healthAction(id){
+  const w = warningById(id); if(!w || !w.action) return;
+  const a = w.action;
+  if(a.type==='move-import'){
+    closeSheet(); openAccountsSheet();
+    S.accUI.move = { id:a.importId, to:null }; S.accUI.del = null; renderAccountsSheet();
+    const box = $('#move-box'); if(box) box.scrollIntoView({ block:'center' });
+  } else if(a.type==='import'){
+    closeSheet(); S.imp = newImp();
+    if(a.accountId && (D().accounts||[]).some(x=>x.id===a.accountId)) S.imp.accountId = a.accountId;
+    setTab('import');
+  } else if(a.type==='owner-name'){
+    updateSettings(st=>{ st.ownerNames = (st.ownerNames||[]).filter(n=>n!==a.name).concat([a.name]); });
+    toast('Nome salvo: transferências em seu nome agora são reconhecidas.');
+  } else if(a.type==='mark-transfer'){
+    const ids = new Set(a.txIds||[]);
+    const ch = live().filter(t=>ids.has(t.id)).map(t=>Object.assign({}, t, { kind:'transfer', categoryId:null, catSource:'manual' }));
+    commit({ txs: ch });
+    toast(ch.length+' lançamento'+(ch.length===1?'':'s')+' marcado'+(ch.length===1?'':'s')+' como transferência.');
+  } else if(a.type==='triage'){
+    closeSheet(); startTriage();
+  }
+}
+function healthComplete(id){
+  const w = warningById(id); if(!w) return;
+  updateSettings(st=>{
+    const c = Object.assign({ enabled:true, startMonth:null, excluded:[], included:[] }, st.carry||{});
+    for(const m of w.months||[]){ c.excluded = (c.excluded||[]).filter(x=>x!==m); if(!(c.included||[]).includes(m)) c.included = (c.included||[]).concat([m]); }
+    st.carry = c;
+  });
+  toast('Mês marcado como completo: volta para o déficit acumulado.');
+}
+function healthDismiss(id){
+  updateSettings(st=>{ st.dismissedWarnings = (st.dismissedWarnings||[]).filter(x=>x!==id).concat([id]).slice(-500); });
+  toast('Aviso ignorado.');
+}
+function openCarrySheet(){
+  openSheet('<span class="eyebrow">Painel</span><h2>Déficit acumulado</h2>', '<div id="carry-body"></div>', null, { kind:'carry', label:'Déficit acumulado' });
+  renderCarrySheet();
+}
+function monthExcludedReason(ci, m){
+  if(ci.manual.has(m)) return 'você marcou como incompleto';
+  if(ci.auto[m] && !ci.included.has(m)) return ci.auto[m][0];
+  return '';
+}
+function renderCarrySheet(){
+  const el = $('#carry-body'); if(!el) return;
+  const ci = carryInfo();
+  if(!ci.enabled){ el.innerHTML = '<p class="muted">O transporte de déficit está desligado em Ajustes.</p><div class="row"><button class="btn sm" type="button" data-act="settings">Abrir Ajustes</button></div>'; return; }
+  const rows = ci.rows.slice().reverse();
+  el.innerHTML = `<p class="small muted">Quando um mês fecha no vermelho, a diferença passa para o mês seguinte e é paga com a sobra dos próximos meses. Contando desde ${esc(ci.start?fmtYm(ci.start):'—')}.</p>
+    <div id="carry-rows">${rows.map(r=>{
+      const why = monthExcludedReason(ci, r.month);
+      const cov = r.newDeficit>0 ? [r.coverage.card?`cartão ${brl(r.coverage.card)}`:'', r.coverage.investments?`resgates ${brl(r.coverage.investments)}`:'', r.coverage.balance?`saldo/reserva ${brl(r.coverage.balance)}`:''].filter(Boolean).join(', ') : '';
+      return `<div class="cm-row ${r.excluded?'excl':''}" data-month="${esc(r.month)}">
+        <div class="top"><b>${esc(fmtYm(r.month))}</b><span class="money ${r.carryOut>0?'out':''}" data-cents="${r.carryOut}">${r.carryOut>0?brl(r.carryOut):'zerado'}</span></div>
+        <div class="xs muted">Saldo do mês <span class="money ${r.net<0?'out':''}">${brl(r.net)}</span>${r.excluded?' · não entra na conta':''}${!r.excluded&&r.repaid?` · pagou <span class="money">${brl(r.repaid)}</span> do déficit`:''}${!r.excluded&&r.newDeficit?` · novo déficit coberto por ${esc(cov)}`:''}</div>
+        <label class="switch sm"><input type="checkbox" data-carryx="${esc(r.month)}" ${r.excluded?'checked':''}>Mês incompleto — não transportar</label>
+        ${why?`<span class="xs ${ci.auto[r.month]&&!ci.manual.has(r.month)?'warn-t':'muted'}">${esc(why)}${ci.auto[r.month]&&!ci.manual.has(r.month)?' (Saúde dos dados). Desmarque para incluir mesmo assim.':''}</span>`:''}
+      </div>`; }).join('')}</div>
+    <div class="row"><button class="btn sm" type="button" data-act="settings" data-focus="carry">Ajustes do déficit</button><button class="btn sm ghost" type="button" data-act="health">Saúde dos dados</button></div>`;
+}
+function openMonthMenu(){
+  openSheet(`<span class="eyebrow">Mês</span><h2>${esc(fmtYm(S.ui.month))}</h2>`, '<div id="month-body"></div>', null, { kind:'month', label:'Opções do mês' });
+  renderMonthMenu();
+}
+function renderMonthMenu(){
+  const el = $('#month-body'); if(!el) return;
+  const m = S.ui.month; const ci = carryInfo();
+  const excl = ci.excluded.has(m);
+  const why = monthExcludedReason(ci, m);
+  const nW = health().filter(w=>(w.months||[]).includes(m)).length;
+  el.innerHTML = `<label class="switch"><input type="checkbox" data-carryx="${esc(m)}" id="month-incomplete" ${excl?'checked':''}>Mês incompleto — não transportar</label>
+    <p class="xs muted">${why?esc(why)+'. ':''}Um mês incompleto não entra no déficit acumulado: o que vem de antes passa direto para o mês seguinte.</p>
+    <div class="row"><button class="btn sm" type="button" data-act="health" data-month="${esc(m)}">Saúde dos dados deste mês${nW?` · ${nW}`:''}</button><button class="btn sm ghost" type="button" data-act="carry">Déficit mês a mês</button></div>`;
+}
+function carrySettingsHTML(){
+  const ci = carryInfo();
+  const ms = ci.months;
+  return `<span class="lbl">Déficit entre meses</span>
+    <label class="switch"><input type="checkbox" id="carry-enabled" ${ci.enabled?'checked':''}>Transportar déficit entre meses</label>
+    <div class="field" ${ci.enabled?'':'hidden'}><label for="carry-start">Começar a contar em</label><select id="carry-start"><option value="">Automático (${esc(ci.autoStart?fmtYm(ci.autoStart):'—')})</option>${ms.map(m=>`<option value="${esc(m)}" ${carrySettings().startMonth===m?'selected':''}>${esc(fmtYm(m))}</option>`).join('')}</select>
+    <span class="xs muted">Automático: o primeiro mês sem aviso que bloqueia em Saúde dos dados.</span></div>
+    ${ci.enabled&&ms.length?`<div class="carry-months" id="carry-months">${ms.slice().reverse().map(m=>{ const why = monthExcludedReason(ci, m); const on = ci.manual.has(m) || (ci.auto[m] && !ci.included.has(m));
+      return `<label class="switch sm"><input type="checkbox" data-carryx="${esc(m)}" ${on?'checked':''}><span>${esc(fmtYm(m))} — incompleto, não transportar${why?` <span class="xs muted">(${esc(why)})</span>`:ci.auto[m]?' <span class="xs muted">(incluído manualmente)</span>':''}</span></label>`; }).join('')}</div>`:''}`;
 }
 
 /* ---------- budget ---------- */
@@ -985,6 +1214,75 @@ function presetRange(k) {
 }
 
 /* --- editor --- */
+/* --- v2.1: "não sabe o que é?" — Google, CNPJ and CNAE help (nothing is sent anywhere until the user taps) --- */
+const gUrl = q => 'https://www.google.com/search?q=' + encodeURIComponent(q);
+const EXT = 'target="_blank" rel="noopener noreferrer"';
+function canLookupCnpj() { return S.auth.mode === 'netlify' && !!S.auth.user && store && typeof store.lookupCnpj === 'function'; }
+function lookupHelpHTML(t, p) {
+  const q = (E.searchQuery ? E.searchQuery(t) : (t.merchant || t.rawDescription)) || t.rawDescription || '';
+  const merchant = t.merchant || t.rawDescription || '';
+  const cnpj = E.findCNPJ ? E.findCNPJ(t.rawDescription) : null;
+  const viaServer = cnpj && canLookupCnpj();
+  return `<div class="help-box" id="${p}-help">
+    <div class="row help-links">
+      <a class="btn sm" id="${p}-google" href="${esc(gUrl(q))}" ${EXT}>Pesquisar no Google</a>
+      ${cnpj ? (viaServer ? `<button class="btn sm" type="button" id="${p}-cnpj" data-act="cnpj-lookup" data-p="${p}" data-cnpj="${esc(cnpj)}">Consultar CNPJ</button>`
+        : `<a class="btn sm" id="${p}-cnpj" href="https://brasilapi.com.br/api/cnpj/v1/${esc(cnpj)}" ${EXT}>Consultar CNPJ</a>`)
+        : `<a class="btn sm" id="${p}-cnpj-name" href="${esc(gUrl(merchant + ' CNPJ'))}" ${EXT}>Buscar CNPJ pelo nome</a>`}
+    </div>
+    ${cnpj ? `<span class="xs muted">CNPJ na descrição: ${esc(E.formatCNPJ ? E.formatCNPJ(cnpj) : cnpj)}</span>` : ''}
+    <div id="${p}-cnpj-out" aria-live="polite"></div>
+    ${viaServer ? '' : `<div class="field"><label for="${p}-cnae">Colar CNAE</label><input type="text" id="${p}-cnae" data-cnae="${p}" autocomplete="off" placeholder="Ex.: 4771-7/01, ou cole a atividade"><span class="xs muted">${cnpj ? 'Abra a consulta, copie o "cnae_fiscal" (ou a resposta inteira) e cole aqui.' : 'Achou o CNPJ? Copie a atividade principal (CNAE) e cole aqui.'}</span></div>`}
+    <div class="sug-row" id="${p}-cnae-out" aria-live="polite"></div>
+    <p class="xs faint">Nada é enviado a ninguém até você tocar num destes botões.</p>
+  </div>`;
+}
+function cnaeChipHTML(sug, p) {
+  if (!sug || !catIndex()[sug.categoryId]) return '';
+  const g = groupOf(sug.categoryId);
+  return `<button type="button" class="sug-btn" data-act="cnae-pick" data-p="${esc(p)}" data-cat="${esc(sug.categoryId)}" title="${esc((sug.code ? 'CNAE ' + sug.code + ' · ' : '') + (sug.description || ''))}"><span class="sw" style="background:${esc(g ? g.color : 'var(--accent)')}"></span>${esc(catLabel(sug.categoryId))}</button>`;
+}
+function renderCnaeSuggestion(p, value) {
+  const out = $('#' + p + '-cnae-out'); if (!out) return;
+  const v = String(value || '').trim();
+  if (!v) { out.innerHTML = ''; return; }
+  const sug = E.suggestFromCNAE ? E.suggestFromCNAE(v) : null;
+  out.innerHTML = sug && catIndex()[sug.categoryId]
+    ? `<span class="xs muted" style="flex-basis:100%">${sug.code ? 'CNAE ' + esc(sug.code) + ' · ' : ''}${esc(sug.description || '')} — toque para usar:</span>${cnaeChipHTML(sug, p)}`
+    : '<span class="xs muted">Não reconheci esse código ou atividade. Escolha a categoria abaixo.</span>';
+}
+async function cnpjLookup(p, cnpj) {
+  const out = $('#' + p + '-cnpj-out'); if (!out) return;
+  out.innerHTML = '<span class="small"><span class="spinner"></span> Consultando…</span>';
+  try {
+    const r = await store.lookupCnpj(cnpj);
+    const o = $('#' + p + '-cnpj-out'); if (!o) return;
+    const sug = (E.suggestFromCNAE && (E.suggestFromCNAE(r.cnae_fiscal != null ? String(r.cnae_fiscal) : '') || E.suggestFromCNAE(r.cnae_fiscal_descricao || ''))) || null;
+    o.innerHTML = `<div class="cnpj-res"><b>${esc(r.nome_fantasia || r.razao_social || '')}</b>${r.nome_fantasia && r.razao_social ? `<span class="xs muted">${esc(r.razao_social)}</span>` : ''}
+      <span class="small">Atividade: ${esc(r.cnae_fiscal_descricao || '—')}${r.cnae_fiscal ? ' <span class="faint">(' + esc(String(r.cnae_fiscal)) + ')</span>' : ''}</span>
+      ${r.municipio ? `<span class="xs muted">${esc(r.municipio)}${r.uf ? '/' + esc(r.uf) : ''}</span>` : ''}
+      ${sug && catIndex()[sug.categoryId] ? `<div class="sug-row"><span class="xs muted" style="flex-basis:100%">Sugestão — toque para usar:</span>${cnaeChipHTML(sug, p)}</div>` : ''}</div>`;
+  } catch (e) {
+    const o = $('#' + p + '-cnpj-out'); if (!o) return;
+    const msg = { rate_limited: 'Muitas consultas nesta hora. Tente mais tarde.', cnpj_not_found: 'CNPJ não encontrado na Receita.', invalid_cnpj: 'CNPJ inválido.', upstream_timeout: 'O serviço de CNPJ não respondeu a tempo. Tente de novo.', upstream_unavailable: 'O serviço de CNPJ está fora do ar. Tente de novo mais tarde.', network: 'Sem conexão. Tente quando a internet voltar.' }[e && e.code] || 'Não consegui consultar agora.';
+    o.innerHTML = `<span class="small out">${esc(msg)}</span>`;
+  }
+}
+function cnaePick(p, catId) {
+  if (p === 'tri') { triagePick(catId); return; }
+  const sel = $('#ed-cat'); if (!sel) return;
+  sel.value = catId; sel.dispatchEvent(new Event('change', { bubbles: true }));
+  toast('Categoria escolhida: ' + catLabel(catId) + '. Toque em Salvar.');
+}
+/** installment-series rule that covers t (if any) + the parcelas range it covers */
+function seriesNote(t) {
+  if (!t || !t.installment || !E.seriesRuleMatches) return null;
+  const r = (D().rules || []).find(x => x && x.origin === 'installment' && E.seriesRuleMatches(x, t));
+  if (!r) return null;
+  const ns = live().filter(o => o.installment && E.seriesRuleMatches(r, o)).map(o => o.installment.n);
+  return { rule: r, from: Math.min(...ns, t.installment.n), to: t.installment.total };
+}
+
 function openTxEditor(id) {
   const t = txById(id); if (!t) return;
   const head = `<span class="eyebrow">${esc(new Date(t.date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }))}${t.time ? ' · ' + esc(t.time) : ''} · ${esc(accName(t.accountId))}</span>
@@ -993,9 +1291,11 @@ function openTxEditor(id) {
     <p class="xs faint" style="font-family:ui-monospace,Menlo,monospace;word-break:break-all">${esc(t.rawDescription)}</p>`;
   const body = `
     <div class="field cat-picker"><label for="ed-cat">Categoria</label>${catSelect('ed-cat', t.categoryId, { allowNone: true })}${newCatForm('ed', { kind: t.amount > 0 ? 'income' : 'expense' })}</div>
-    <label class="remember" for="ed-remember"><input type="checkbox" id="ed-remember" checked><span>Lembrar esta categoria para <b>${esc(t.merchant || t.rawDescription)}</b><br><span class="xs muted">Cria uma regra e categoriza os outros lançamentos desse estabelecimento que estão sem categoria ou vieram do dicionário. Desmarque para mudar só este.</span></span></label>
+    <label class="remember" for="ed-remember"><input type="checkbox" id="ed-remember" ${rememberDefault(t, t.categoryId) ? 'checked' : ''}><span>Lembrar esta categoria para <b>${esc(t.merchant || t.rawDescription)}</b><br><span class="xs muted">Cria uma regra e categoriza os outros lançamentos desse estabelecimento que estão sem categoria ou vieram do dicionário. Desmarque para mudar só este.</span></span></label>
     <div class="field"><label for="ed-kind">Tipo</label><select id="ed-kind">${Object.entries(KIND_LBL).map(([k, v]) => `<option value="${k}" ${t.kind === k ? 'selected' : ''}>${v}</option>`).join('')}</select><span class="xs muted">O tipo acompanha a categoria (Renda → entrada, Investimentos → investimento, demais → gasto; valores positivos em gastos são estornos).</span></div>
     <div class="field"><label for="ed-note">Observação</label><input type="text" id="ed-note" value="${esc(t.note || '')}" placeholder="Opcional"></div>
+    ${(() => { const sn = seriesNote(t); return sn ? `<p class="xs muted" id="ed-series">Lembrado para esta compra (parcelas ${sn.from}–${sn.to}): ${esc(catLabel(sn.rule.set.categoryId))}.</p>` : ''; })()}
+    ${t.amount < 0 && countable(t) ? `<details class="help-d" ${isUncat(t) ? 'open' : ''}><summary>Não sabe o que é? Pesquise</summary>${lookupHelpHTML(t, 'ed')}</details>` : ''}
     ${t.catSource ? `<p class="xs muted">Categoria atual veio de: ${esc(SRC_LBL[t.catSource] || t.catSource)}.</p>` : ''}
     <div class="row end"><button class="btn" type="button" data-act="closesheet">Cancelar</button><button class="btn primary" type="button" data-act="savetx" data-id="${esc(t.id)}">Salvar</button></div>`;
   openSheet(head, body, null, { kind: 'editor', id: t.id, label: 'Editar lançamento' });
@@ -1035,9 +1335,30 @@ function setCategory(t, catId, opts) {
       changed.push(Object.assign({}, o, { categoryId: catId, catSource: 'learned', kind: k || o.kind }));
     }
   }
+  // "Lembrar" unticked on a parcela: remember the category for THIS purchase only (its series of parcelas)
+  let series = null;
+  if (catId && !opts.remember && t.installment && countable(t)) {
+    const r = eng('rememberInstallmentSeries', t, catId, d.rules, { now: nowISO() });
+    const rule = r && (r.created || r.existing);
+    if (rule) {
+      if (r.created) { d.rules = r.rules; ruleChanged = true; }
+      const ns = [t.installment.n];
+      for (const o of live()) {
+        if (o.id === t.id || !o.installment || o.catSource === 'manual' || !countable(o)) continue;
+        if (!E.seriesRuleMatches(rule, o)) continue;
+        ns.push(o.installment.n);
+        if (o.categoryId === catId && o.catSource === 'series') continue;
+        before.push(clone(o));
+        const k = kindFor(catId);
+        changed.push(Object.assign({}, o, { categoryId: catId, catSource: 'series', kind: k || o.kind }));
+      }
+      series = { from: Math.min(...ns), to: t.installment.total, n: ns.length - 1 };
+    }
+  }
   commit({ txs: changed, meta: ruleChanged || created ? ['rules'] : [] });
-  return { txs: before, rules: ruleChanged ? prevRules : null, history: ruleChanged ? prevHistory : null, created: ruleChanged ? created : null, n: changed.length - 1 };
+  return { txs: before, rules: ruleChanged ? prevRules : null, history: ruleChanged ? prevHistory : null, created: ruleChanged && opts.remember ? created : null, n: changed.length - 1, series };
 }
+const seriesLabel = sr => sr ? 'lembrado para esta compra (parcelas ' + sr.from + '–' + sr.to + ')' : '';
 function saveTxEdit(id) {
   const t = txById(id); if (!t) return;
   let cat = ($('#ed-cat') || {}).value || null;
@@ -1047,6 +1368,7 @@ function saveTxEdit(id) {
   const remember = !!($('#ed-remember') || {}).checked;
   const changedCat = cat !== (t.categoryId || null);
   let res = null;
+  if (changedCat && cat) noteRememberChoice(cat, remember, rememberDefault(t, cat));
   if (changedCat) res = setCategory(t, cat, { kind, note, remember });
   else {
     const upd = Object.assign({}, t, { kind });
@@ -1056,17 +1378,18 @@ function saveTxEdit(id) {
   }
   const bits = ['Salvo'];
   if (res && res.created) bits.push('regra aprendida para ' + (t.merchant || ''));
-  if (res && res.n) bits.push(res.n + ' outro' + (res.n > 1 ? 's' : '') + ' de ' + t.merchant);
+  if (res && res.series) bits.push(seriesLabel(res.series));
+  else if (res && res.n) bits.push(res.n + ' outro' + (res.n > 1 ? 's' : '') + ' de ' + t.merchant);
   toast(bits.join(' · '));
   return true;
 }
 
 /* ================= TRIAGEM ================= */
-const TRI = { queue: [], idx: 0, done: 0, total: 0, start: 0, timer: null, streak: 0, group: null, undo: [], newCat: false, remember: true };
+const TRI = { queue: [], idx: 0, done: 0, total: 0, start: 0, timer: null, streak: 0, group: null, undo: [], newCat: false, remember: true, touched: false };
 function startTriage() {
   const q = live().filter(isUncat).sort((a, b) => b.date.localeCompare(a.date));
   if (!q.length) { toast('Nada para classificar.'); return; }
-  Object.assign(TRI, { queue: q.map(t => t.id), idx: 0, done: 0, total: q.length, start: Date.now(), streak: 0, group: null, undo: [], newCat: false, remember: true });
+  Object.assign(TRI, { queue: q.map(t => t.id), idx: 0, done: 0, total: q.length, start: Date.now(), streak: 0, group: null, undo: [], newCat: false, remember: true, touched: false });
   closeSheet(); renderTriage();
   clearInterval(TRI.timer); TRI.timer = setInterval(tickTriage, 1000);
   document.body.style.overflow = 'hidden';
@@ -1126,8 +1449,10 @@ function renderTriage(timeUp) {
     choices = newCatForm('tri', { open: true, kind: t.amount > 0 ? 'income' : 'expense' });
   } else if (TRI.group) {
     const g = (D().categories || []).find(x => x.id === TRI.group);
+    const off = new Set(settingsObj().rememberOff || []);
+    const onlyThis = id => !TRI.touched && off.has(id) ? ' <span class="xs faint" title="Da última vez você desmarcou Lembrar para esta categoria">· só este</span>' : '';
     choices = `<div class="row"><button class="btn ghost sm" type="button" data-act="tri-back">‹ Grupos</button><b>${esc(g.name)}</b></div><div class="tri-grid">
-      ${(g.children || []).map(c => `<button type="button" class="tri-btn sub" data-act="tri-pick" data-cat="${esc(c.id)}"><span class="sw" style="background:${esc(g.color)}"></span>${esc(c.name)}</button>`).join('')}
+      ${(g.children || []).map(c => `<button type="button" class="tri-btn sub" data-act="tri-pick" data-cat="${esc(c.id)}"><span class="sw" style="background:${esc(g.color)}"></span>${esc(c.name)}${onlyThis(c.id)}</button>`).join('')}
       <button type="button" class="tri-btn sub" data-act="tri-pick" data-cat="${esc(g.id)}"><span class="sw" style="background:${esc(g.color)};opacity:.4"></span>${esc(g.name)} (geral)</button></div>`;
   } else {
     choices = `${sugs.length ? `<div class="field"><span class="lbl">${amb ? 'Sugestões (estabelecimento ambíguo: ' + esc(amb.note || amb.pattern) + ')' : 'Sugestões'}</span><div class="sug-row" id="tri-sugs">${sugs.map(s => { const g = groupOf(s.categoryId); return `<button type="button" class="sug-btn" data-act="tri-pick" data-cat="${esc(s.categoryId)}" title="${esc(s.reason)}"><span class="sw" style="background:${esc(g ? g.color : 'var(--accent)')}"></span>${esc(catLabel(s.categoryId))}</button>`; }).join('')}</div></div>` : ''}
@@ -1140,7 +1465,8 @@ function renderTriage(timeUp) {
       <div class="big">${esc(t.merchant || t.rawDescription)}</div><div class="amt money ${t.amount > 0 ? 'in' : ''}">${brl(t.amount)}</div>
       ${meta.length ? `<div class="tri-meta">${meta.join('<span aria-hidden="true">·</span>')}</div>` : ''}
       <span class="xs faint" style="font-family:ui-monospace,Menlo,monospace;word-break:break-all">${esc(t.rawDescription)}</span>
-      <label class="remember small" for="tri-remember"><input type="checkbox" id="tri-remember" ${TRI.remember ? 'checked' : ''}><span>Lembrar esta categoria para <b>${esc(t.merchant || t.rawDescription)}</b>${sameN > 1 ? ` <span class="faint">(e as outras ${sameN - 1} sem categoria)</span>` : ''}</span></label></div>
+      <label class="remember small" for="tri-remember"><input type="checkbox" id="tri-remember" ${(TRI.touched ? TRI.remember : !amb) ? 'checked' : ''}><span>Lembrar esta categoria para <b>${esc(t.merchant || t.rawDescription)}</b>${sameN > 1 ? ` <span class="faint">(e as outras ${sameN - 1} sem categoria)</span>` : ''}${amb && !TRI.touched ? '<br><span class="xs muted">Desmarcado: este estabelecimento vende de tudo.</span>' : ''}${t.installment ? '<br><span class="xs muted">Desmarcado, a categoria vale só para esta compra parcelada.</span>' : ''}</span></label>
+      ${t.amount < 0 ? `<details class="help-d"><summary>Não sabe o que é? Pesquise</summary>${lookupHelpHTML(t, 'tri')}</details>` : ''}</div>
     ${choices}
     <div class="row"><button class="btn grow" type="button" data-act="tri-skip">Pular</button><button class="btn grow" type="button" data-act="tri-transfer">É transferência</button></div>
   </div></div>`;
@@ -1148,13 +1474,17 @@ function renderTriage(timeUp) {
 const triState = () => ({ idx: TRI.idx, done: TRI.done, streak: TRI.streak });
 function triagePick(catId) {
   const t = triageCurrent(); if (!t) return;
-  const box = $('#tri-remember'); const remember = box ? box.checked : true;
-  TRI.remember = remember;
+  const box = $('#tri-remember');
+  const def = rememberDefault(t, catId);
+  const remember = TRI.touched && box ? box.checked : def;
+  if (TRI.touched) noteRememberChoice(catId, remember, def);
   const st = triState();
   const before = uncatCount();
   const res = setCategory(t, catId, { remember });
   const after = uncatCount();
-  const label = catLabel(catId) + ' para ' + (t.merchant || t.rawDescription) + (res.created ? ' + regra' : '') + (res.n ? ' (+' + res.n + ')' : '');
+  const label = catLabel(catId) + ' para ' + (t.merchant || t.rawDescription) + (res.created ? ' + regra' : '') + (res.series ? ' · ' + seriesLabel(res.series) : (res.n ? ' (+' + res.n + ')' : ''));
+  if (res.series) toast(seriesLabel(res.series).replace(/^./, c => c.toUpperCase()));
+  TRI.touched = false;
   pushUndo({ label, txs: res.txs, rules: res.rules, history: res.history, tri: st });
   TRI.done = Math.min(TRI.total, TRI.done + Math.max(1, before - after)); TRI.streak++; TRI.group = null; TRI.newCat = false; TRI.idx++;
   renderTriage();
@@ -1162,13 +1492,13 @@ function triagePick(catId) {
 function triageSkip() {
   const t = triageCurrent(); if (!t) return;
   pushUndo({ label: 'Pular ' + (t.merchant || t.rawDescription), txs: [], tri: triState() });
-  TRI.idx++; TRI.streak = 0; TRI.group = null; TRI.newCat = false; renderTriage();
+  TRI.idx++; TRI.streak = 0; TRI.group = null; TRI.newCat = false; TRI.touched = false; renderTriage();
 }
 function triageTransfer() {
   const t = triageCurrent(); if (!t) return;
   pushUndo({ label: 'Transferência: ' + (t.merchant || t.rawDescription), txs: [clone(t)], tri: triState() });
   commit({ txs: [Object.assign({}, t, { kind: 'transfer', categoryId: null, catSource: 'manual' })] });
-  TRI.done = Math.min(TRI.total, TRI.done + 1); TRI.streak++; TRI.idx++; TRI.group = null; TRI.newCat = false; renderTriage();
+  TRI.done = Math.min(TRI.total, TRI.done + 1); TRI.streak++; TRI.idx++; TRI.group = null; TRI.newCat = false; TRI.touched = false; renderTriage();
 }
 function triageUndo() {
   const u = TRI.undo.pop(); if (!u) return;
@@ -1178,7 +1508,7 @@ function triageUndo() {
   if (u.history) d.history = u.history;
   // restored records get a fresh updatedAt so the merge on the server keeps the undo
   commit({ txs: (u.txs || []).map(t => clone(t)), meta });
-  Object.assign(TRI, u.tri, { group: null, newCat: false });
+  Object.assign(TRI, u.tri, { group: null, newCat: false, touched: false });
   renderTriage();
   toast('Desfeito: ' + u.label);
 }
@@ -1490,7 +1820,9 @@ function commitImport(){
   }
   const added = addTransactions(fresh);
   S.real.imports = S.real.imports || {};
-  S.real.imports[I.importId] = { id:I.importId, fileName:I.fileName||'arquivo', at:nowISO(), accountId:accId, profileId, count:added.length, total:added.reduce((s,t)=>s+t.amount,0) };
+  const dts = added.map(t=>t.date).sort();
+  S.real.imports[I.importId] = { id:I.importId, fileName:I.fileName||'arquivo', at:nowISO(), updatedAt:nowISO(), accountId:accId, profileId, count:added.length, total:added.reduce((s,t)=>s+t.amount,0),
+    from: dts[0]||null, to: dts[dts.length-1]||null, duplicates:(I.dedup.duplicates||[]).length, hasBalance: (I.result.transactions||[]).some(t=>t.balance!=null), kindGuess: eng('guessAccountType', I.analysis, I.result.transactions) || null };
   const auto = added.filter(t=>t.categoryId).length;
   const tri = added.filter(isUncat).length;
   I.done = { imported: added.length, auto, triage: tri, dup:(I.dedup.duplicates||[]).length, err:(I.result.errors||[]).length, importId:I.importId };
@@ -1675,11 +2007,12 @@ function renderCats(){
   const el = $('#scr-cats'); const d = D();
   const budgets = d.settings.budgets||{};
   const ruleText = r => {
+    if(r.origin==='installment' && r.series) return `compra parcelada <code>${esc(r.series.merchant)}</code> de ${esc(isoToBR(r.series.start))} em ${r.series.total}x → <b>${esc(catLabel(r.set&&r.set.categoryId))}</b> <span class="xs faint">até ${esc(fmtYm(r.expiresAfter||''))}</span>`;
     const opT = {contains:'contém', equals:'é igual a', startsWith:'começa com', regex:'casa com'}[r.match&&r.match.op]||'';
     const fT = (r.match&&r.match.field)==='rawDescription' ? 'descrição' : 'estabelecimento';
     return `${fT} ${opT} <code>${esc(r.match&&r.match.value)}</code> → <b>${esc(catLabel(r.set&&r.set.categoryId))}</b>${r.set&&r.set.kind?` · ${esc(KIND_LBL[r.set.kind]||r.set.kind)}`:''}`;
   };
-  const originTag = o => `<span class="tag ${o==='ai'?'acc':o==='learned'?'ok':''}">${o==='ai'?'IA':o==='learned'?'aprendida':'sua'}</span>`;
+  const originTag = o => `<span class="tag ${o==='ai'?'acc':o==='learned'||o==='installment'?'ok':''}">${o==='ai'?'IA':o==='learned'?'aprendida':o==='installment'?'só esta compra':'sua'}</span>`;
   const unc = [...new Set(live().filter(isUncat).map(t=>t.merchant).filter(Boolean))];
   el.innerHTML = `
     <h2 style="font-size:1.35rem">Categorias</h2>
@@ -1701,8 +2034,8 @@ function renderCats(){
     <div class="card">
       <div class="card-h"><h2>Regras</h2><button class="btn sm" type="button" data-act="rule-new">Nova regra</button></div>
       <p class="small muted">Aplicadas antes do dicionário. As aprendidas surgem quando você escolhe uma categoria com "Lembrar esta categoria" marcado. Categorias manuais nunca são trocadas por regras.</p>
-      ${(d.rules||[]).length?`<div id="rule-list">${d.rules.slice().sort((a,b)=>(b.priority||0)-(a.priority||0)).map(r=>`<div class="rule" data-rule="${esc(r.match&&r.match.value)}"><div class="txt">${ruleText(r)} ${originTag(r.origin)}${r.hits?` <span class="xs faint">${r.hits} uso${r.hits>1?'s':''}</span>`:''}</div>
-        <button class="btn sm" type="button" data-act="rule-edit" data-id="${esc(r.id)}">Editar</button>
+      ${(d.rules||[]).length?`<div id="rule-list">${d.rules.slice().sort((a,b)=>(b.priority||0)-(a.priority||0)).map(r=>`<div class="rule" data-rule="${esc(r.match?r.match.value:(r.series?r.series.merchant:''))}"><div class="txt">${ruleText(r)} ${originTag(r.origin)}${r.hits?` <span class="xs faint">${r.hits} uso${r.hits>1?'s':''}</span>`:''}</div>
+        ${r.origin==='installment'?'':`<button class="btn sm" type="button" data-act="rule-edit" data-id="${esc(r.id)}">Editar</button>`}
         ${S.ui.confirmRule===r.id?`<button class="btn sm danger" type="button" data-act="rule-del" data-id="${esc(r.id)}">Confirmar</button>`:`<button class="btn sm" type="button" data-act="rule-ask" data-id="${esc(r.id)}" aria-label="Excluir regra">Excluir</button>`}</div>`).join('')}</div>`:'<p class="small muted">Nenhuma regra ainda.</p>'}
     </div>
     <div class="card" id="ai-cat-card" ${FEATURES.ai&&S.sample?'':'hidden'}>
@@ -1902,6 +2235,7 @@ function openSettings(step) {
     <div class="field"><span class="lbl">Armazenamento</span><p class="small">${esc(st)}</p>
       ${signedOut() ? '<div class="row"><button class="btn primary sm" type="button" data-act="login">Entrar</button></div>' : ''}</div>
     <div class="field"><span class="lbl">Contas</span><div class="row"><button class="btn" type="button" data-act="accounts" id="btn-accounts">Contas e importações</button></div></div>
+    <div class="field" id="carry-set">${carrySettingsHTML()}</div>
     <div class="field"><span class="lbl">Backup</span>
       <div class="row"><button class="btn" type="button" data-act="export" id="btn-export" ${S.mode === 'real' && store ? '' : 'disabled'}>Exportar backup</button>
       <label class="btn" for="restore-file" style="position:relative;overflow:hidden">Importar backup<input type="file" id="restore-file" accept=".json,application/json" style="position:absolute;inset:0;opacity:0;cursor:pointer"></label></div>
@@ -2162,7 +2496,17 @@ const ACT = {
   'ai-cats': () => runAICategories(),
   'ai-cats-clear': () => { S.aiSug = null; renderCats(); },
   'ai-cats-apply': () => applyAISuggestions(),
-  settings: () => openSettings(),
+  settings: el => { openSettings(); if (el && el.dataset && el.dataset.focus === 'carry') { const c = $('#carry-set'); if (c) c.scrollIntoView({ block: 'start' }); } },
+  health: el => { if ($('#triage-root').innerHTML) return; openHealthSheet(el && el.dataset ? el.dataset.month : null); },
+  'health-all': () => { S.healthUI = { month: null }; renderHealthSheet(); },
+  'hw-act': el => healthAction(el.dataset.id),
+  'hw-complete': el => healthComplete(el.dataset.id),
+  'hw-dismiss': el => healthDismiss(el.dataset.id),
+  'hw-undismiss': () => { updateSettings(st => { st.dismissedWarnings = []; }); },
+  carry: () => openCarrySheet(),
+  'month-menu': () => openMonthMenu(),
+  'cnpj-lookup': el => cnpjLookup(el.dataset.p, el.dataset.cnpj),
+  'cnae-pick': el => cnaePick(el.dataset.p, el.dataset.cat),
   accounts: () => openAccountsSheet(),
   'imp-move': el => { S.accUI.move = { id: el.dataset.id, to: null }; S.accUI.del = null; renderAccountsSheet(); },
   'imp-move-cancel': () => { S.accUI.move = null; renderAccountsSheet(); },
@@ -2201,6 +2545,7 @@ document.addEventListener('input', ev => {
     if (/^hol-/.test(t.id) && m.length === 10 && S.imp && S.imp.hol) { readHolerite(); if (t.id === 'hol-adv-date') S.imp.hol.advDateTouched = true; if (t.id === 'hol-date' && S.imp.hol.adv && !S.imp.hol.advDateTouched) { S.imp.hol.advDate = E.defaultAdvanceDate(S.imp.hol.date); const ad = $('#hol-adv-date'); if (ad) ad.value = isoToBR(S.imp.hol.advDate); } const sp = $('#hol-split'); if (sp) sp.innerHTML = holSplitHTML(S.imp.hol); }
     return;
   }
+  if (t.dataset && t.dataset.cnae) { renderCnaeSuggestion(t.dataset.cnae, t.value); return; }
   if (t.id === 'tx-search') { clearTimeout(searchT); searchT = setTimeout(() => { S.ui.q = t.value; S.ui.txLimit = 200; saveTxPrefs(); renderTxList(); }, 150); }
   else if (t.id === 'imp-check') { S.imp.checksum = t.value; clearTimeout(searchT); searchT = setTimeout(() => { renderImport(); const i = $('#imp-check'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 500); }
   else if (t.id === 'hol-net') { S.imp.hol.net = t.value; S.imp.hol.netTouched = t.value.trim() !== ''; const sp = $('#hol-split'); if (sp) sp.innerHTML = holSplitHTML(S.imp.hol); }
@@ -2229,12 +2574,15 @@ document.addEventListener('change', ev => {
       if (t.value === '__new') { if (p) ncOpen(p); return; }
       t.dataset.prev = t.value;
       if (p) { const f = $('#' + p + '-nc'); if (f) f.hidden = true; }
-      if (t.id === 'ed-cat' && t.value) { const k = kindFor(t.value); const ks = $('#ed-kind'); const cur = txById(((S.sheet || {}).id) || ''); if (k && ks && (!cur || countable(cur))) ks.value = k; }
+      if (t.id === 'ed-cat' && t.value) { const k = kindFor(t.value); const ks = $('#ed-kind'); const cur = txById(((S.sheet || {}).id) || ''); if (k && ks && (!cur || countable(cur))) ks.value = k; const rb = $('#ed-remember'); if (rb && cur) rb.checked = rememberDefault(cur, t.value); }
       return;
     }
     if (t.dataset && t.dataset.ncgroup) { const ng = $('#' + t.dataset.ncgroup + '-nc-ng'); if (ng) ng.hidden = t.value !== '__newgroup'; return; }
-    if (t.id === 'tri-remember') { TRI.remember = t.checked; return; }
+    if (t.id === 'tri-remember') { TRI.remember = t.checked; TRI.touched = true; return; }
     if (t.id === 'tx-sort') { S.ui.sort = t.value; saveTxPrefs(); renderTxList(); return; }
+    if (t.dataset && t.dataset.carryx) { setMonthExcluded(t.dataset.carryx, t.checked); return; }
+    if (t.id === 'carry-enabled') { updateSettings(st => { st.carry = Object.assign({ excluded: [], included: [] }, st.carry || {}, { enabled: t.checked }); }); return; }
+    if (t.id === 'carry-start') { updateSettings(st => { st.carry = Object.assign({ enabled: true, excluded: [], included: [] }, st.carry || {}, { startMonth: t.value || null }); }); return; }
     if (t.id === 'imp-file' && t.files && t.files[0]) handleFile(t.files[0]);
     else if (t.id === 'restore-file' && t.files && t.files[0]) readBackup(t.files[0]);
     else if (t.id === 'imp-acc') { S.imp.accountId = t.value; $('#new-acc').hidden = t.value !== '__new'; }
@@ -2303,6 +2651,6 @@ async function boot() {
   window.addEventListener('pagehide', () => { flushPersist(); });
 }
 // test hook (read-only views of the state), harmless in production
-window.__ff = { state: () => S, live: () => live(), D: () => D(), period: () => period(), flush: () => flushPersist(), store: () => store };
+window.__ff = { state: () => S, live: () => live(), D: () => D(), period: () => period(), flush: () => flushPersist(), store: () => store, health: () => health(), carry: () => carryInfo() };
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
