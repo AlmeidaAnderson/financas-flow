@@ -250,11 +250,12 @@ def scenario_artifact(b):
     print('     warnings:', ids)
     errs = J(pg, '() => FinEngine.dataHealth({ transactions: __ff.live(), accounts: __ff.D().accounts, imports: __ff.D().imports, settings: __ff.D().settings }).errors')
     check(errs == [], f'no check threw ({errs})')
-    for pre, what in [('b:extrato-in-card:imp-wrong', 'b: extrato inside the card account'), ('b:mixed:cartao', 'b: account mixing extrato and fatura'),
+    for pre, what in [('b:extrato-in-card:imp-wrong', 'b: extrato inside the card account'), 
                       ('c:no-fatura:', 'c: payment without fatura'), ('c:mismatch:', 'c: payment ≠ fatura total'), ('f:ask:', 'f: "Isto é você?"'),
                       ('j:ok:', None)]:
         if what:
             check(any(i.startswith(pre) for i in ids), what)
+    check(not any(i.startswith('b:mixed:') for i in ids), 'b: no second "mistura" warning for the import already flagged')
     sev = J(pg, '() => FinEngine.dataHealth({ transactions: __ff.live(), accounts: __ff.D().accounts, imports: __ff.D().imports, settings: __ff.D().settings }).find(w => w.id.startsWith("c:no-fatura:")).severity')
     check(sev == 'blocking', 'payment without fatura blocks its month')
     set_month(pg, '2026-08')
@@ -605,7 +606,8 @@ def scenario_real(b):
     check(len(ext) == 1, 'one import classified as a bank extrato inside the credit-card account')
     hit = [w for w in res['list'] if w['id'] == 'b:extrato-in-card' and ext and ext[0] in (w['imp'] or [])]
     check(bool(hit) and hit[0]['action'] == 'move-import', '(b) fires for the extrato in the card account, with "Mover importação"')
-    check(any(w['id'] == 'b:mixed' for w in res['list']), '(b) the card account mixes extrato and fatura')
+    check(not any(w['id'] == 'b:mixed' for w in res['list']), '(b) no second "mistura" warning for the same misplaced import')
+    check(not any(w['id'] == 'j:dups' for w in res['list']), '(j) a debit toll reversed in the extrato is not a repeat of the card toll')
     set_month(pg, J(pg, '() => __ff.live().map(t => t.date.slice(0, 7)).sort().pop()'))
     check(pg.is_visible('#health-chip'), 'Painel shows the chip with the real data')
     pg.click('#health-chip'); pg.wait_for_selector('#health-body .hw')

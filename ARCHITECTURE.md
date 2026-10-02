@@ -70,4 +70,7 @@ The "local" adapter (localStorage) is used for dev, tests and when not signed in
   blocking data-health warning are excluded unless in `included`), `rememberOff: [categoryId]` ("Lembrar" starts unticked
   for these), `dismissedWarnings: [warningId]`, `ownerNames: [name]` (own-account transfer detection).
 - Engine: `CNAE_MAP`, `suggestFromCNAE`, `findCNPJ`, `searchQuery`, `installmentSeries`, `rememberInstallmentSeries`,
-  `pruneSeriesRules`, `carryover`, `buildSankey({carry})`, `dataHealth`, `blockingMonths`, `importKind`.
+  `pruneSeriesRules`, `carryover`, `buildSankey({carry})`, `dataHealth`, `blockingMonths`, `importKind`, `filePeriod`.
+- Data-health notes: the running month's partial extrato is `info` with `carryExclude: true` (still out of the carry-over);
+  coverage of an import uses the period in its file name when present; overlapping-import "repeats" are only checked between
+  imports of the same kind and ignore rows reversed by an estorno; `dedupe` matches exact ids before fuzzy matches.

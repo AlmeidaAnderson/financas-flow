@@ -1585,9 +1585,16 @@
     const used = new Set();
     const byId = new Map(ex.map((t, i) => [t.id, i]));
     const fresh = [], duplicates = [];
+    // pass 1: exact ids (re-importing the same file). Done first so that, with two identical rows in a file
+    // (two tolls, same day, same amount), the one already stored is not "used up" by the other row's fuzzy match.
+    const idHit = new Map();
     for (const t of incoming || []) {
-      let hit = -1;
-      if (byId.has(t.id) && !used.has(byId.get(t.id)) && sameInstallment(ex[byId.get(t.id)], t)) hit = byId.get(t.id);
+      if (!byId.has(t.id)) continue;
+      const i = byId.get(t.id);
+      if (!used.has(i) && sameInstallment(ex[i], t)) { used.add(i); idHit.set(t, i); }
+    }
+    for (const t of incoming || []) {
+      let hit = idHit.has(t) ? idHit.get(t) : -1;
       if (hit < 0) {
         const dn = dayNum(t.date);
         for (let i = 0; i < ex.length; i++) {
@@ -1601,6 +1608,7 @@
         }
       }
       if (hit >= 0) { used.add(hit); duplicates.push(Object.assign({}, t, { duplicateOf: ex[hit].id })); }
+      else if (byId.has(t.id)) fresh.push(Object.assign({}, t, { id: t.id + '_' + hashStr(String(t.rowIndex) + '|' + fresh.length) }));
       else fresh.push(t);
     }
     return { fresh, duplicates };
@@ -2572,7 +2580,10 @@
       const dates = list.map(t => t.date).sort();
       const freq = {}; list.forEach(t => { freq[t.accountId] = (freq[t.accountId] || 0) + 1; });
       const accountId = Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0];
-      impInfo.push({ id, rec, list, from: dates[0], to: dates[dates.length - 1], accountId, kind: importKind(list, rec), name: rec.fileName || id });
+      const fp = filePeriod(rec.fileName);
+      // coverage: the period printed in the file name (e.g. "extrato_de_03-07-2026_ate_01-10-2026.csv") when it contains the rows
+      const cover = fp && fp[0] <= dates[0] && fp[1] >= dates[dates.length - 1] ? fp : [dates[0], dates[dates.length - 1]];
+      impInfo.push({ id, rec, list, from: dates[0], to: dates[dates.length - 1], coverFrom: cover[0], coverTo: cover[1], accountId, kind: importKind(list, rec), name: rec.fileName || id });
     }
     const impById = new Map(impInfo.map(i => [i.id, i]));
     const kindOfTx = t => { const i = impById.get(t.importId); return i ? i.kind : null; };
@@ -2610,7 +2621,7 @@
         const months = [...new Set(i.list.map(t => monthOf(t.date)))].sort();
         if (i.kind === 'extrato' && at === 'credit_card') {
           push({ id: 'b:extrato-in-card:' + i.id, severity: 'warning', title: 'Extrato bancário dentro de um cartão',
-            detail: '"' + i.name + '" parece um extrato de conta (Pix, TED, saldo ou rendimentos), mas está em ' + accName(i.accountId) + ', que é um cartão de crédito. Assim, entradas viram estornos e pagamentos de fatura se confundem com as compras. Mova esta importação para uma conta corrente.',
+            detail: '"' + i.name + '" parece um extrato de conta (Pix, TED, saldo ou rendimentos), mas está em ' + accName(i.accountId) + ', que é um cartão de crédito. Misturados, um lançamento do extrato pode ser descartado como repetido de uma compra da fatura (ou o contrário) e o pagamento da fatura fica na mesma conta que as compras. Mova esta importação para uma conta corrente (pode criar uma nova na hora).',
             months, accountId: i.accountId, importIds: [i.id], action: { type: 'move-import', label: 'Mover importação', importId: i.id } });
         } else if (i.kind === 'fatura' && (at === 'checking' || at === 'savings')) {
           push({ id: 'b:fatura-in-checking:' + i.id, severity: 'warning', title: 'Fatura de cartão dentro de uma conta corrente',
@@ -2622,6 +2633,8 @@
         const k = kindsBy[acc];
         if (k.extrato.length && k.fatura.length) {
           const wrong = typeOf(acc) === 'credit_card' ? k.extrato : k.fatura;
+          // every misplaced import already has its own "Extrato dentro de um cartão"/"Fatura dentro de uma conta" warning
+          if ((typeOf(acc) === 'credit_card' || typeOf(acc) === 'checking' || typeOf(acc) === 'savings') && wrong.length) continue;
           push({ id: 'b:mixed:' + acc, severity: 'warning', title: accName(acc) + ' mistura extrato e fatura',
             detail: 'Esta conta tem ' + k.extrato.length + ' extrato' + (k.extrato.length > 1 ? 's' : '') + ' bancário' + (k.extrato.length > 1 ? 's' : '') + ' e ' + k.fatura.length + ' fatura' + (k.fatura.length > 1 ? 's' : '') + ' de cartão. Cada tipo precisa da sua conta: separe as importações.',
             months: [...new Set(k.extrato.concat(k.fatura).flatMap(i => i.list.map(t => monthOf(t.date))))].sort(), accountId: acc,
@@ -2651,16 +2664,31 @@
         const pm = monthOf(p.date);
         if (cands.length) {
           const f = cands[0]; used.add(f); matched.add(p);
+          const diff = -p.amount - f.total; // > 0: paid more than the purchases in the file
+          // a fatura row of exactly that amount may have been dropped on import as a "repeat" of a row from
+          // ANOTHER import of the same account (typically an extrato kept inside the card account)
+          const lookalike = diff > 0 ? txs.find(t => t.importId !== f.i.id && t.amount === -diff && t.kind === 'expense' &&
+            t.date >= f.from && t.date <= f.to && f.i.list.some(o => o.amount === t.amount && Math.abs(dayNum(o.date) - dayNum(t.date)) <= 2 && merchantSimilar(o.merchant || o.rawDescription, t.merchant || t.rawDescription))) : null;
+          const why = lookalike
+            ? ' A diferença é igual a um lançamento de ' + (lookalike.merchant || lookalike.rawDescription) + ' em ' + lookalike.date.split('-').reverse().join('/') + ' que está em outra importação' + (lookalike.accountId === f.i.accountId ? ' desta conta' : '') + ': provavelmente a linha igual da fatura foi descartada como repetida ao importar. ' + (lookalike.accountId === f.i.accountId ? 'Separe as importações por conta (Mover importação) e importe' : 'Importe') + ' "' + f.i.name + '" de novo — só o que falta entra.'
+            : diff > 0 ? ' Pagou-se mais do que as compras da fatura importada: pode faltar um lançamento nela (IOF, juros, tarifa, uma compra) ou o pagamento incluir saldo de outra fatura.'
+              : ' Pagou-se menos do que a fatura: pode ter sido um pagamento parcial (o resto vai para a próxima fatura, com juros) ou a fatura ter um crédito que não veio no arquivo.';
           push({ id: 'c:mismatch:' + p.id, severity: 'warning', title: 'Pagamento não bate com a fatura',
-            detail: 'O pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ' difere em ' + formatBRL(Math.abs(f.total + p.amount)) + ' do total da fatura importada ("' + f.i.name + '", ' + formatBRL(f.total) + '). Pode faltar lançamento na fatura (IOF, juros, uma compra) ou o pagamento ter sido parcial.',
-            months: [monthOf(f.to)], accountId: f.i.accountId, importIds: [f.i.id, p.importId].filter(Boolean) });
+            detail: 'O pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ' difere em ' + formatBRL(Math.abs(diff)) + ' do total da fatura "' + f.i.name + '" (' + formatBRL(f.total) + ', compras até ' + f.to.split('-').reverse().join('/') + ').' + why,
+            months: [monthOf(f.to)], accountId: f.i.accountId, importIds: [f.i.id, p.importId].filter(Boolean), txIds: lookalike ? [lookalike.id] : undefined });
         } else {
           const miss = addMonths(pm, -1);
-          const cardAcc = accounts.find(a => a.type === 'credit_card');
+          // the card: the account of the faturas imported closest to this payment (else the only card account)
+          const near = faturas.slice().sort((a, b) => Math.abs(dayNum(a.from) - dayNum(p.date)) - Math.abs(dayNum(b.from) - dayNum(p.date)))[0];
+          const cardAccId = near ? near.i.accountId : ((accounts.find(a => a.type === 'credit_card') || {}).id);
+          const nextF = faturas.filter(f => f.to > p.date).sort((a, b) => a.to.localeCompare(b.to))[0];
+          const prevF = faturas.filter(f => f.to < addDays(p.date, -45)).sort((a, b) => b.to.localeCompare(a.to))[0];
+          const upTo = nextF ? addDays(nextF.from, -1) : null;
+          const where = nextF && prevF ? ' — fica entre "' + prevF.i.name + '" e "' + nextF.i.name + '"' : nextF ? ' — é a anterior a "' + nextF.i.name + '"' : prevF ? ' — é a seguinte a "' + prevF.i.name + '"' : '';
           push({ id: 'c:no-fatura:' + p.id, severity: 'blocking', title: 'Pagamento de fatura sem a fatura',
-            detail: 'Há um pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ', mas nenhuma fatura importada fecha nesse período. As compras dessa fatura (provavelmente de ' + fmtM(miss) + ') não estão no app.',
-            months: [miss], accountId: cardAcc ? cardAcc.id : undefined, importIds: [p.importId].filter(Boolean),
-            action: { type: 'import', label: 'Importar fatura de ' + monthName(miss), accountId: cardAcc ? cardAcc.id : null, month: miss } });
+            detail: 'Há um pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ', mas a fatura que ele pagou não foi importada. Importe a fatura com vencimento em ' + fmtM(pm) + where + '. As compras dela (' + (upTo ? 'até ' + upTo.split('-').reverse().join('/') : 'de ' + fmtM(miss)) + ') não estão no app, por isso ' + monthName(miss) + ' fica fora do déficit acumulado.',
+            months: [miss], accountId: cardAccId || undefined, importIds: [p.importId].filter(Boolean),
+            action: { type: 'import', label: 'Importar fatura (venc. ' + monthName(pm) + ')', accountId: cardAccId || null, month: miss } });
         }
       }
       // reverse: a fatura whose payment never shows up although an extrato covers the period
@@ -2729,21 +2757,35 @@
       const byAcc = {};
       for (const i of impInfo) if (i.kind === 'extrato' || (!i.kind && typeOf(i.accountId) && typeOf(i.accountId) !== 'credit_card')) (byAcc[i.accountId] = byAcc[i.accountId] || []).push(i);
       for (const acc of Object.keys(byAcc)) {
-        const iv = byAcc[acc].map(i => [i.from, i.to]).sort((a, b) => a[0].localeCompare(b[0]));
+        const iv = byAcc[acc].map(i => [i.coverFrom || i.from, i.coverTo || i.to]).sort((a, b) => a[0].localeCompare(b[0]));
         const merged = [];
         for (const [f, t] of iv) {
           const last = merged[merged.length - 1];
           if (last && dayNum(f) <= dayNum(last[1]) + 3) { if (t > last[1]) last[1] = t; } else merged.push([f, t]);
         }
         const partial = new Map();
+        const br = d => d.split('-').reverse().join('/');
         for (const [f, t] of merged) {
-          if (+f.slice(8, 10) > 2) partial.set(monthOf(f), 'começa em ' + f.split('-').reverse().join('/'));
+          if (+f.slice(8, 10) > 2) partial.set(monthOf(f), { start: f });
           const fm = monthOf(t), last = daysInMonth(+t.slice(0, 4), +t.slice(5, 7));
-          if (+t.slice(8, 10) < last - 2) partial.set(fm, (partial.has(fm) && monthOf(f) === fm ? partial.get(fm) + ' e ' : '') + 'termina em ' + t.split('-').reverse().join('/'));
+          if (+t.slice(8, 10) < last - 2) partial.set(fm, Object.assign(partial.has(fm) && monthOf(f) === fm ? partial.get(fm) : {}, { end: t }));
         }
-        for (const [m, why] of partial) {
-          push({ id: 'e:partial:' + acc + ':' + m, severity: 'blocking', title: fmtM(m).replace(/^./, c => c.toUpperCase()) + ' incompleto em ' + accName(acc),
-            detail: 'O extrato de ' + accName(acc) + ' ' + why + (m === curMonth ? ' (mês em andamento)' : '') + '. O mês não está inteiro no app, então o saldo dele não entra no déficit acumulado.',
+        for (const [m, p] of partial) {
+          const Mon = fmtM(m).replace(/^./, c => c.toUpperCase());
+          const missing = [];
+          if (p.start) missing.push(+p.start.slice(8, 10) === 2 ? 'o dia 1º' : 'do dia 1º ao dia ' + (+p.start.slice(8, 10) - 1));
+          if (p.end) missing.push('depois de ' + br(p.end));
+          const ongoing = m === curMonth && p.end && !p.start;
+          if (ongoing) {
+            // the month is not over yet: nothing is missing, it just is not finished
+            push({ id: 'e:partial:' + acc + ':' + m, severity: 'info', carryExclude: true, title: Mon + ' ainda em andamento',
+              detail: 'O extrato de ' + accName(acc) + ' vai até ' + br(p.end) + '. Até o mês acabar e você importar o resto, ' + monthName(m) + ' não entra no déficit acumulado (para não contar um mês pela metade).',
+              months: [m], accountId: acc, importIds: byAcc[acc].map(i => i.id) });
+            continue;
+          }
+          push({ id: 'e:partial:' + acc + ':' + m, severity: 'blocking', title: Mon + ' incompleto em ' + accName(acc),
+            detail: 'O extrato de ' + accName(acc) + (p.start ? ' começa em ' + br(p.start) : '') + (p.start && p.end ? ' e' : '') + (p.end ? ' termina em ' + br(p.end) : '') +
+              ', então faltam ' + missing.join(' e ') + '. Com o mês pela metade, o saldo de ' + monthName(m) + ' não entra no déficit acumulado. Importe um extrato que cubra o mês inteiro — ou, se não houve nada nesses dias, toque em "Marcar mês como completo".',
             months: [m], accountId: acc, importIds: byAcc[acc].map(i => i.id) });
         }
       }
@@ -2772,11 +2814,11 @@
         }
       } else {
         const freq = new Map();
-        for (const x of cps) { const k = x.c.name; const f = freq.get(k) || { n: 0, in: 0, out: 0, months: new Set() }; f.n++; f[x.c.dir === 'in' ? 'in' : 'out']++; f.months.add(monthOf(x.t.date)); freq.set(k, f); }
+        for (const x of cps) { const k = x.c.name; const f = freq.get(k) || { n: 0, in: 0, out: 0, counted: 0, months: new Set() }; f.n++; if (x.t.kind !== 'transfer') f.counted++; f[x.c.dir === 'in' ? 'in' : 'out']++; f.months.add(monthOf(x.t.date)); freq.set(k, f); }
         const best = [...freq.entries()].filter(([k, f]) => f.n >= 2 && k.split(' ').length >= 2).sort((a, b) => (b[1].in && b[1].out ? 1 : 0) - (a[1].in && a[1].out ? 1 : 0) || b[1].n - a[1].n)[0];
         if (best) {
           push({ id: 'f:ask:' + hashStr(best[0]), severity: 'info', title: 'Estas transferências são suas?',
-            detail: best[1].n + ' Pix/TED ' + (best[1].in && best[1].out ? 'de e para' : best[1].in ? 'recebidos de' : 'enviados para') + ' "' + best[0] + '". Se for você mesmo (outra conta sua), elas não são renda nem gasto.',
+            detail: best[1].n + ' Pix/TED ' + (best[1].in && best[1].out ? 'de e para' : best[1].in ? 'recebidos de' : 'enviados para') + ' "' + best[0] + '". Se for você mesmo (outra conta sua), elas não são renda nem gasto' + (best[1].counted ? ' — hoje ' + best[1].counted + (best[1].counted > 1 ? ' estão contando' : ' está contando') + ' como entrada/gasto.' : ' (já estão como transferência; confirmar ajuda a reconhecer as próximas e a avisar se faltar essa conta no app).'),
             months: [...best[1].months].sort(), action: { type: 'owner-name', label: 'Isto é você?', name: best[0] } });
         }
       }
@@ -2840,8 +2882,13 @@
           if (!amts.every(a => Math.abs(a - med) <= med * 0.1)) continue;
           const next = addMonths(r[r.length - 1], 1);
           const typDay = +byM[r[r.length - 1]][0].date.slice(8, 10);
-          const accMax = txs.filter(t => t.accountId === acc && monthOf(t.date) === next).map(t => t.date).sort().pop();
-          if (!accMax || +accMax.slice(8, 10) < Math.min(28, typDay + 3)) continue;
+          // the next month must be covered PAST the usual day by the same kind of file the charges came from
+          // (a fatura charge on the 28th is not "missing" because an extrato in the same account runs to the 30th)
+          const kinds = new Set(list.map(kindOfTx));
+          const due = next + '-' + pad2(Math.min(28, typDay + 3));
+          const coveredBy = impInfo.some(i => i.accountId === acc && kinds.has(i.kind) && (i.coverFrom || i.from) <= next + '-01' && (i.coverTo || i.to) >= due);
+          const accMax = txs.filter(t => t.accountId === acc && kinds.has(kindOfTx(t)) && monthOf(t.date) === next).map(t => t.date).sort().pop();
+          if (!coveredBy && (!accMax || accMax < due)) continue;
           const name = list[0].merchant || list[0].rawDescription;
           push({ id: 'h:sub:' + hashStr(k) + ':' + next, severity: 'info', title: 'Assinatura não apareceu: ' + name,
             detail: name + ' cobrou cerca de ' + formatBRL(med) + ' em ' + r.length + ' meses seguidos, mas não aparece em ' + fmtM(next) + ' em ' + accName(acc) + '. Foi cancelada, mudou de cartão ou falta algo na importação?',
@@ -2885,12 +2932,19 @@
           const A = list[x], B = list[y];
           const from = A.from > B.from ? A.from : B.from, to = A.to < B.to ? A.to : B.to;
           if (from > to) continue;
+          // an extrato and a fatura are different sources: the same amount on the same day there is a debit and a
+          // credit purchase (or a debit charge that was reversed), never the same file imported twice
+          if (A.kind && B.kind && A.kind !== B.kind) continue;
           const bIdx = new Map();
           for (const t of B.list) { if (t.date < addDays(from, -2) || t.date > addDays(to, 2)) continue; const k = t.amount; if (!bIdx.has(k)) bIdx.set(k, []); bIdx.get(k).push(t); }
           const sus = [];
           const usedB = new Set();
+          // rows cancelled by an estorno in their own file (same amount back, ±3 days, same place) are not repeats
+          const reversed = L => { const r = new Set(); for (const t of L) { if (t.amount >= 0 || r.has(t)) continue; const e = L.find(o => o !== t && !r.has(o) && o.amount === -t.amount && Math.abs(dayNum(o.date) - dayNum(t.date)) <= 3 && merchantSimilar(o.merchant || o.rawDescription, t.merchant || t.rawDescription)); if (e) { r.add(t); r.add(e); } } return r; };
+          const revA = reversed(A.list), revB = reversed(B.list);
+          for (const b of revB) usedB.add(b);
           for (const a of A.list) {
-            if (a.date < addDays(from, -2) || a.date > addDays(to, 2) || a.kind === 'card_payment') continue;
+            if (a.date < addDays(from, -2) || a.date > addDays(to, 2) || a.kind === 'card_payment' || revA.has(a)) continue;
             const hit = (bIdx.get(a.amount) || []).find(b => !usedB.has(b) && Math.abs(dayNum(a.date) - dayNum(b.date)) <= 2 && sameInstallment(a, b) && merchantSimilar(a.merchant || a.rawDescription, b.merchant || b.rawDescription));
             if (hit) { usedB.add(hit); sus.push([a, hit]); }
           }
@@ -2964,11 +3018,24 @@
     out.errors = errors;
     return out;
   }
+  /** "extrato_de_03-07-2026_ate_01-10-2026.csv" / "2026-07-03 a 2026-10-01" -> ['2026-07-03','2026-10-01'] | null */
+  function filePeriod(name) {
+    const ds = [];
+    const re = /(?<!\d)(?:(\d{2})[-_.](\d{2})[-_.](\d{4})|(\d{4})[-_.](\d{2})[-_.](\d{2}))(?!\d)/g;
+    let m;
+    while ((m = re.exec(String(name || ''))) && ds.length < 3) {
+      const iso = m[1] ? m[3] + '-' + m[2] + '-' + m[1] : m[4] + '-' + m[5] + '-' + m[6];
+      const mo = +iso.slice(5, 7), d = +iso.slice(8, 10);
+      if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) ds.push(iso);
+    }
+    if (ds.length !== 2 || ds[0] > ds[1]) return null;
+    return ds;
+  }
   function addDays(iso, k) { const d = new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + k)); return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()); }
   /** Months that data-health says are incomplete (blocking warnings), for the carry-over. -> { 'YYYY-MM': [titles] } */
   function blockingMonths(warnings) {
     const out = {};
-    for (const w of warnings || []) if (w && w.severity === 'blocking') for (const m of w.months || []) (out[m] = out[m] || []).push(w.title);
+    for (const w of warnings || []) if (w && (w.severity === 'blocking' || w.carryExclude)) for (const m of w.months || []) (out[m] = out[m] || []).push(w.title);
     return out;
   }
 
@@ -3103,7 +3170,7 @@
     tombstonesForImport, backfillImports, migrateData,
     // v2.1
     CNAE_MAP, suggestFromCNAE, findCNPJ, validCNPJ, formatCNPJ, searchQuery, installmentSeries, rememberInstallmentSeries, pruneSeriesRules, seriesRuleMatches: seriesMatches,
-    carryover, dataHealth, blockingMonths, importKind, monthName,
+    carryover, dataHealth, blockingMonths, importKind, monthName, filePeriod,
     lookupDictionaryEntry: (d, m, r, a) => lookupDictionaryEntry(d || DEFAULT_DICTIONARY, m, r, a),
     // extras (helpers, stable but not part of the contract)
     _internal: { parseDelimited, detectDelimiter, detectDateFormat, norm, stripAccents, hashStr, SKIP_PATTERNS, parseInstallmentText, detectKind }

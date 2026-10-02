@@ -210,7 +210,7 @@ test('v2.1 dataHealth b: extrato in a card account, fatura in a checking account
   const b = ws.find(w => w.id === 'b:extrato-in-card:extX');
   assert.ok(b, ids(ws).join());
   assert.equal(b.action.type, 'move-import'); assert.equal(b.action.label, 'Mover importação'); assert.deepEqual(b.importIds, ['extX']);
-  assert.ok(ws.some(w => w.id === 'b:mixed:card'));
+  assert.ok(!ws.some(w => w.id === 'b:mixed:card'), 'the extrato-in-card warning already covers it: no second warning for the same import');
   assert.equal(E.importKind(ext), 'extrato'); assert.equal(E.importKind(fat), 'fatura');
   const fat2 = fat.map(t => Object.assign({}, t, { accountId: 'cc' }));
   assert.ok(has(H(fat2), 'b:fatura-in-checking:'));
@@ -227,7 +227,8 @@ test('v2.1 dataHealth c: payment without fatura (blocking), amount mismatch, fat
   const ws = H(bank.concat(fatJul, fatAug));
   const miss = ws.find(w => w.id.startsWith('c:no-fatura:'));
   assert.ok(miss && miss.severity === 'blocking' && miss.months[0] === '2026-06', ids(ws).join());
-  assert.equal(miss.action.type, 'import'); assert.equal(miss.action.label, 'Importar fatura de junho');
+  assert.equal(miss.action.type, 'import'); assert.equal(miss.action.label, 'Importar fatura (venc. julho)');
+  assert.match(miss.detail, /vencimento em julho 2026/); assert.match(miss.detail, /anterior a "fJul"/); assert.match(miss.detail, /até 27\/06\/2026/);
   const mm = ws.filter(w => w.id.startsWith('c:mismatch:'));
   assert.equal(mm.length, 1); assert.match(mm[0].detail, /R\$ 3,70/);
   assert.ok(!has(ws, 'c:no-payment:'), 'both faturas paid');
@@ -334,4 +335,90 @@ test('v2.1 dataHealth j/k/l: overlapping imports, parcela gaps, large uncategori
   const g = E.dataHealth({ transactions: [null, { id: 'x' }, { id: 'y', date: '2026-07-01', amount: 0 }, tx('2026-07-01', -1, '')], accounts: null, imports: null });
   assert.ok(Array.isArray(g)); assert.deepEqual(g.errors, []);
   assert.deepEqual(E.dataHealth({}).errors, []);
+});
+
+// ---------------------------------------------------------------- tester regressions (synthetic data)
+test('regression: an extrato row reversed by an estorno is not a "repeat" of the same purchase on the fatura', () => {
+  const fat = [];
+  for (let i = 0; i < 12; i++) fat.push(tx('2026-07-' + String(i + 10).padStart(2, '0'), -2000 - i, 'LOJA ' + i, { accountId: 'card', importId: 'fat', installment: i < 2 ? { n: 2, total: 4 } : null }));
+  fat.push(tx('2026-07-29', -370, 'PEDAGIO RODOVIA X', { accountId: 'card', importId: 'fat' }));
+  const ext = extratoRows('2026-07-01', '2026-07-31', { acc: 'card', imp: 'ext', noBalance: true }).concat([
+    tx('2026-07-29', -370, 'PEDAGIO RODOVIA X  CIDADE BR', { accountId: 'card', importId: 'ext', time: '18:51' }),
+    tx('2026-07-29', 370, 'Estorno PEDAGIO RODOVIA X  CIDADE BR', { accountId: 'card', importId: 'ext', kind: 'expense', time: '18:52' })]);
+  const ws = H(fat.concat(ext));
+  assert.ok(!has(ws, 'j:dups:'), ids(ws).join());
+  assert.ok(has(ws, 'b:extrato-in-card:ext'));
+  // two faturas (same kind) with the same line still are flagged
+  const fat2 = fat.map(t => Object.assign({}, t, { id: t.id + 'b', importId: 'fat2' }));
+  assert.ok(has(H(fat.concat(fat2)), 'j:dups:'));
+});
+
+test('regression: payment ≠ fatura by exactly a line found in another import → says the line was dropped as a repeat', () => {
+  const fat = [tx('2026-07-28', -30000, 'LOJA D', { accountId: 'card', importId: 'fAug' }), tx('2026-07-29', -370, 'PEDAGIO RODOVIA X', { accountId: 'card', importId: 'fAug' }),
+    tx('2026-08-27', -20000, 'LOJA E', { accountId: 'card', importId: 'fAug', installment: { n: 3, total: 3 } })];
+  const bank = extratoRows('2026-07-01', '2026-09-30', { noBalance: true }).concat([
+    tx('2026-07-29', -370, 'PEDAGIO RODOVIA X CIDADE', { importId: 'ext1' }), tx('2026-07-29', 370, 'Estorno PEDAGIO RODOVIA X CIDADE', { importId: 'ext1', kind: 'expense' }),
+    tx('2026-09-04', -50740, 'PAGAMENTO DE FATURA', { kind: 'card_payment', importId: 'ext1' })]);
+  const mm = H(bank.concat(fat)).find(w => w.id.startsWith('c:mismatch:'));
+  assert.ok(mm, 'still a mismatch (true positive)');
+  assert.match(mm.detail, /R\$ 3,70/); assert.match(mm.detail, /descartada como repetida/); assert.match(mm.detail, /importe "fAug" de novo|Importe "fAug" de novo/);
+  // a plain shortfall gets the partial-payment explanation instead
+  const bank2 = bank.map(t => t.kind === 'card_payment' ? Object.assign({}, t, { amount: -40000 }) : t);
+  assert.match(H(bank2.concat(fat)).find(w => w.id.startsWith('c:mismatch:')).detail, /pagamento parcial/);
+});
+
+test('regression: dedupe matches exact ids first, so a re-import restores the 2nd of two identical rows dropped earlier', () => {
+  const row = (id, ri) => ({ id, date: '2026-07-29', amount: -370, rawDescription: 'PEDAGIO RODOVIA X', merchant: 'PEDAGIO RODOVIA X', accountId: 'card', kind: 'expense', rowIndex: ri });
+  // stored: only the SECOND toll (id occ1); the first was dropped as a duplicate of a since-moved extrato row
+  const existing = [row('tx_occ1', 69), row('tx_other', 70)].map((t, i) => i ? Object.assign(t, { amount: -999, rawDescription: 'OUTRA', merchant: 'OUTRA' }) : t);
+  const incoming = [row('tx_occ0', 62), row('tx_occ1', 69), Object.assign(row('tx_other', 70), { amount: -999, rawDescription: 'OUTRA', merchant: 'OUTRA' })];
+  const d = E.dedupe(existing, incoming);
+  assert.deepEqual(d.fresh.map(t => t.id), ['tx_occ0']);
+  assert.deepEqual(d.duplicates.map(t => t.id).sort(), ['tx_occ1', 'tx_other']);
+  // plain re-import of the same file: nothing new
+  assert.equal(E.dedupe(incoming, incoming).fresh.length, 0);
+});
+
+test('regression: subscription on a fatura is not "missing" just because an extrato in the same account runs later', () => {
+  const T = [];
+  const fats = [['f6', '2026-05-28', '2026-06-27'], ['f7', '2026-06-28', '2026-07-27'], ['f8', '2026-07-28', '2026-08-27'], ['f9', '2026-08-28', '2026-09-27']];
+  for (const [imp, a, b] of fats) {
+    T.push(tx(a, -2999, 'STREAMING FLEX', { accountId: 'card', importId: imp }));
+    for (let i = 0; i < 8; i++) T.push(tx(addDay(a).slice(0, 8) + String(5 + i * 2).padStart(2, '0'), -1000 - i, 'LOJA ' + i, { accountId: 'card', importId: imp, installment: i === 0 ? { n: 2, total: 3 } : null }));
+    T.push(tx(b, -500, 'PADARIA', { accountId: 'card', importId: imp }));
+  }
+  // charges on 28/05, 28/06, 28/07, 28/08 → next on 28/09 is in the NEXT fatura (not imported); an extrato in the same account goes to 01/10
+  const ext = extratoRows('2026-07-03', '2026-10-01', { acc: 'card', imp: 'ext', noBalance: true });
+  const ws = H(T.concat(ext));
+  assert.ok(!ws.some(w => w.id.startsWith('h:sub:') && /STREAMING/.test(w.title)), ids(ws).join());
+  // when the fatura covering 28/09 IS imported and the charge is absent, it is reported
+  const f10 = [];
+  for (let i = 0; i < 8; i++) f10.push(tx('2026-09-' + String(29 - i).padStart(2, '0'), -700 - i, 'MERCADO ' + i, { accountId: 'card', importId: 'f10' }));
+  f10.push(tx('2026-10-20', -500, 'PADARIA', { accountId: 'card', importId: 'f10' }));
+  const ws2 = H(T.concat(f10));
+  assert.ok(ws2.some(w => w.id.startsWith('h:sub:') && /STREAMING/.test(w.title) && w.months[0] === '2026-09'), ids(ws2).join());
+});
+
+test('regression: partial months use the period in the file name, explain the missing days; the running month is info but still out of the carry-over', () => {
+  const part = extratoRows('2026-07-07', '2026-10-01');
+  const ws = H(part, { imports: { ext1: { id: 'ext1', fileName: 'extrato_de_03-07-2026_ate_01-10-2026.csv' } }, today: '2026-10-02' });
+  const jul = ws.find(w => w.id === 'e:partial:cc:2026-07');
+  assert.ok(jul && jul.severity === 'blocking');
+  assert.match(jul.detail, /começa em 03\/07\/2026/); assert.match(jul.detail, /do dia 1º ao dia 2/); assert.match(jul.detail, /déficit acumulado/); assert.match(jul.detail, /Marcar mês como completo/);
+  const oct = ws.find(w => w.id === 'e:partial:cc:2026-10');
+  assert.ok(oct && oct.severity === 'info' && oct.carryExclude === true && /em andamento/.test(oct.title));
+  assert.deepEqual(Object.keys(E.blockingMonths(ws)).sort(), ['2026-07', '2026-10']);
+  assert.equal(E.filePeriod('Fatura2026-10-05.csv'), null); assert.deepEqual(E.filePeriod('extrato_de_03-07-2026_ate_01-10-2026.csv'), ['2026-07-03', '2026-10-01']);
+  // a past month that ends early is still blocking
+  const ws2 = H(part, { today: '2026-12-15' });
+  assert.equal(ws2.find(w => w.id === 'e:partial:cc:2026-10').severity, 'blocking');
+});
+
+test('regression: "Estas transferências são suas?" says whether they already are transfers', () => {
+  const T = extratoRows('2026-07-01', '2026-07-31', { noBalance: true }).concat([
+    tx('2026-07-05', 300000, 'Pix recebido de Maria Exemplo da Silva', { importId: 'ext1', kind: 'transfer' }),
+    tx('2026-08-05', 250000, 'Pix recebido de Maria Exemplo da Silva', { importId: 'ext1', kind: 'transfer' })]);
+  assert.match(H(T).find(w => w.id.startsWith('f:ask:')).detail, /já estão como transferência/);
+  const T2 = T.map(t => t.kind === 'transfer' ? Object.assign({}, t, { kind: 'income' }) : t);
+  assert.match(H(T2).find(w => w.id.startsWith('f:ask:')).detail, /2 estão contando como entrada/);
 });
