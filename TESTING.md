@@ -39,3 +39,9 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
 ## 7. Filters
 - [ ] Transações → Filtros: date range, min/max value, account, category → count badge → Limpar
 - [ ] Change the sort order; default is newest first
+
+## Test build inside claude.ai (no Netlify deploy)
+- `npm run build:artifact` → `dist-artifact/financas-flow.html` (gitignored). Publish it as an Artifact with
+  capabilities `{ db: {}, user: {}, downloads: {} }`; data lives in your private `data/users/<id>/` subtree.
+- Automated: `npm test` (includes `test/store-artifact.test.mjs`) and `python3 test/e2e/e2e_artifact.py`
+  (fake `window.claude`, screenshots in `screens/artifact/`).

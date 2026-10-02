@@ -15,3 +15,4 @@ tmp/
 *.png.tmp
 backup*.json
 financas-flow-backup-*.json
+dist-artifact/

@@ -10,7 +10,8 @@
   "scripts": {
     "test": "node --test \"test/*.test.js\" \"test/*.test.mjs\"",
     "vendor:identity": "esbuild scripts/identity-entry.mjs --bundle --platform=browser --format=esm --target=es2020 --minify --legal-comments=eof \"--banner:js=/*! @netlify/identity 2.0.0 + gotrue-js (MIT). Vendorizado: npm run vendor:identity */\" --outfile=site/vendor/netlify-identity.js",
-    "icons": "python3 scripts/make_icons.py"
+    "icons": "python3 scripts/make_icons.py",
+    "build:artifact": "node scripts/build-artifact.mjs"
   },
   "dependencies": {
     "@netlify/blobs": "11.1.3",

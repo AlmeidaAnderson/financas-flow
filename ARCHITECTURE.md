@@ -24,7 +24,7 @@ README.md                    pt-BR step-by-step setup for the user
 
 ## Store interface (the ONLY way the app touches persistence/auth) — `site/store.js`
 ```js
-window.FinStore = createStore({ mode })   // mode: "netlify" | "local" ; auto: netlify when served from a Netlify site with Identity, else local
+window.FinStore = createStore({ mode })   // mode: "netlify" | "local" | "artifact" ; auto: artifact when window.claude.use exists (claude.ai Artifact build, site/store-artifact.js), netlify when served from a Netlify site with Identity, else local
 store.init()            -> Promise<{ mode, user: { id, email } | null }>
 store.login()           -> opens login (Identity); store.logout()
 store.onAuth(fn)        -> unsubscribe; fn({ user|null })
@@ -37,6 +37,7 @@ store.subscribe(fn)     -> unsubscribe; fn({ kind: "meta"|"month", key, data, de
 store.status            -> "synced"|"saving"|"offline"|"local"|"error"|"signed_out";  store.onStatus(fn)
 store.exportAll()       -> Promise<object>  (backup JSON, same shape as loadAll + {version:2, exportedAt})
 store.importAll(obj)    -> Promise<void>    (accepts v2 backup AND the v1 artifact backup/db shape)
+store.saveFile?(name, text) -> optional (artifact mode): offers a file via the runtime's downloads.save; the app falls back to <a download> when absent or it resolves false
 ```
 Semantics: writes are optimistic (UI updates immediately); conflicts resolved by the adapter: months merge by transaction `id`, newest `updatedAt` wins, deletions via tombstones `{id, deleted:true, updatedAt}` kept 90 days; meta docs merge field-wise where sensible (rules/categories by id), else last-write-wins. Offline: keep a local cache (IndexedDB or localStorage, try/catch) so the app opens read-only offline and queues writes, flushing on reconnect.
 Sync PC↔phone: poll for changes every 20 s while the tab is visible, and immediately on focus/visibilitychange/online; cheap "changes since" call using a per-user change counter/etags.

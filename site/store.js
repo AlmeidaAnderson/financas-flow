@@ -136,6 +136,33 @@
     return clone(local);
   }
 
+  /**
+   * Converte a lista "viva" que o app mandou para um mês em linhas com updatedAt + tombstones,
+   * a partir das linhas anteriores do mês (com tombstones). Usado pelos adaptadores netlify e artifact.
+   */
+  function stampRowsAt(prevRows, txs, nowIso) {
+    var prev = new Map((prevRows || []).map(function (r) { return [r.id, r]; }));
+    var seen = new Set();
+    var out = [];
+    (txs || []).forEach(function (t) {
+      if (!isObj(t) || typeof t.id !== 'string' || !t.id) throw new Error('Lançamento sem id.');
+      if (seen.has(t.id)) return; seen.add(t.id);
+      var p = prev.get(t.id);
+      var row = clone(t); delete row.deleted;
+      if (p && !p.deleted && deepEqual(withoutStamp(p), withoutStamp(row))) { out.push(p); return; }
+      // cópia velha de uma linha que já foi excluída (aqui ou em outro aparelho): a exclusão vence.
+      // Só uma edição feita DEPOIS da exclusão (updatedAt mais novo) traz a linha de volta.
+      if (p && p.deleted && (!row.updatedAt || ts(row) <= ts(p))) { out.push(p); return; }
+      if (!(row.updatedAt && (!p || ts(row) > ts(p)))) row.updatedAt = nowIso;
+      out.push(row);
+    });
+    prev.forEach(function (p, id) {
+      if (seen.has(id)) return;
+      out.push(p.deleted ? p : { id: id, deleted: true, updatedAt: nowIso });
+    });
+    return out;
+  }
+
   /* --------------------------------------------------------- importação de backups */
   /**
    * Aceita: backup v2 {version:2, meta:{}, months:{ym:[...]}}; backup v1 do artifact
@@ -254,9 +281,23 @@
   }
 
   /* ------------------------------------------------------------------ createStore */
+  /** Página rodando como Artifact do claude.ai (runtime com `claude.use`). */
+  function hasArtifactRuntime(W) {
+    try { return !!(W && W.claude && typeof W.claude.use === 'function'); } catch (e) { return false; }
+  }
+
   function createStore(opts) {
     opts = opts || {};
     var W = opts.window !== undefined ? opts.window : (typeof window !== 'undefined' ? window : null);
+    // modo "artifact" (site/store-artifact.js): explícito, ou automático quando existe window.claude.use.
+    // Sem o adaptador carregado (build da Netlify) segue a detecção normal.
+    // O build do Artifact (FINSTORE_BUILD='artifact') usa este adaptador mesmo sem window.claude (cópia salva da página):
+    // ele cai no modo local sem tentar /.netlify.
+    if (opts.mode === 'artifact' || ((!opts.mode || opts.mode === 'auto') && (hasArtifactRuntime(W) || (W && W.FINSTORE_BUILD === 'artifact')))) {
+      var AS = root.FinStoreArtifact;
+      if (AS && typeof AS.createArtifactStore === 'function') return AS.createArtifactStore(opts);
+      if (opts.mode === 'artifact') throw new Error('store-artifact.js não carregou.');
+    }
     var fetchFn = opts.fetch || (typeof fetch === 'function' ? fetch.bind(root) : null);
     var now = opts.now || function () { return Date.now(); };
     var pollMs = opts.pollMs === undefined ? DEFAULT_POLL_MS : opts.pollMs;
@@ -569,29 +610,7 @@
       });
     }
 
-    function stampRows(prevRows, txs) {
-      var nowIso = new Date(now()).toISOString();
-      var prev = new Map((prevRows || []).map(function (r) { return [r.id, r]; }));
-      var seen = new Set();
-      var out = [];
-      (txs || []).forEach(function (t) {
-        if (!isObj(t) || typeof t.id !== 'string' || !t.id) throw new Error('Lançamento sem id.');
-        if (seen.has(t.id)) return; seen.add(t.id);
-        var p = prev.get(t.id);
-        var row = clone(t); delete row.deleted;
-        if (p && !p.deleted && deepEqual(withoutStamp(p), withoutStamp(row))) { out.push(p); return; }
-        // cópia velha de uma linha que já foi excluída (aqui ou em outro aparelho): a exclusão vence.
-        // Só uma edição feita DEPOIS da exclusão (updatedAt mais novo) traz a linha de volta.
-        if (p && p.deleted && (!row.updatedAt || ts(row) <= ts(p))) { out.push(p); return; }
-        if (!(row.updatedAt && (!p || ts(row) > ts(p)))) row.updatedAt = nowIso;
-        out.push(row);
-      });
-      prev.forEach(function (p, id) {
-        if (seen.has(id)) return;
-        out.push(p.deleted ? p : { id: id, deleted: true, updatedAt: nowIso });
-      });
-      return out;
-    }
+    function stampRows(prevRows, txs) { return stampRowsAt(prevRows, txs, new Date(now()).toISOString()); }
 
     function saveMonth(ym, txs) {
       return init().then(function () {
@@ -1032,7 +1051,11 @@
     return api;
   }
 
-  var lib = { createStore: createStore, normalizeBackup: normalizeBackup, mergeRows: mergeRows, merge3: merge3, META_NAMES: META_NAMES };
+  var lib = {
+    createStore: createStore, normalizeBackup: normalizeBackup, mergeRows: mergeRows, merge3: merge3, META_NAMES: META_NAMES,
+    // ajudantes compartilhados com site/store-artifact.js
+    stampRowsAt: stampRowsAt, liveRows: liveRows, clone: clone, deepEqual: deepEqual, ts: ts, baseYm: baseYm, emitter: emitter, YM_RE: YM_RE, hasArtifactRuntime: hasArtifactRuntime,
+  };
   root.createStore = createStore;
   root.FinStoreLib = lib;
   // window.FinStore: criado sob demanda (o app pode também fazer `window.FinStore = createStore({...})`).
@@ -1045,7 +1068,8 @@
     });
   }
   // PWA: registra o service worker (sw.js ao lado deste arquivo). Seguro chamar de novo no app.
-  if (typeof window !== 'undefined' && root === window && !window.FINSTORE_NO_SW) {
+  // nunca dentro de um Artifact do claude.ai (FINSTORE_NO_SW vem do build) nem com o runtime claude.use
+  if (typeof window !== 'undefined' && root === window && !window.FINSTORE_NO_SW && window.FINSTORE_BUILD !== 'artifact' && !hasArtifactRuntime(window)) {
     try {
       var nav = window.navigator;
       var secure = window.location.protocol === 'https:' || /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);

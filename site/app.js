@@ -358,7 +358,7 @@ function renderStorePill() {
   if (ab) {
     const u = S.auth.user;
     ab.innerHTML = u && u.email ? esc(u.email.charAt(0).toUpperCase()) : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 19.5c1.4-3.4 4-5 7.2-5s5.8 1.6 7.2 5"/></svg>';
-    ab.setAttribute('aria-label', u ? 'Conta: ' + (u.email || '') : (S.auth.mode === 'netlify' ? 'Entrar' : 'Conta'));
+    ab.setAttribute('aria-label', u ? (u.email ? 'Conta: ' + u.email : 'Conta') : (S.auth.mode === 'netlify' ? 'Entrar' : 'Conta'));
   }
 }
 function signedOut() { return S.auth.mode === 'netlify' && !S.auth.user; }
@@ -1275,7 +1275,16 @@ function handlePaste(){
 }
 function loadXLSX(){
   if(window.XLSX) return Promise.resolve(window.XLSX);
-  return Promise.reject(new Error('leitor de planilhas não carregou; recarregue a página ou salve como CSV'));
+  const fail = () => new Error('leitor de planilhas não carregou; recarregue a página ou salve como CSV');
+  // build do Artifact: SheetJS vem de CDN com async; espera o carregamento em andamento (até 15 s)
+  const tag = document.querySelector('script[data-xlsx]');
+  if(!tag || tag.dataset.failed) return Promise.reject(fail());
+  return new Promise((resolve, reject) => {
+    const done = () => { clearTimeout(t); window.XLSX ? resolve(window.XLSX) : reject(fail()); };
+    const t = setTimeout(done, 15000);
+    tag.addEventListener('load', done, { once: true });
+    tag.addEventListener('error', done, { once: true });
+  });
 }
 function startAnalysis(analysis){
   const I = S.imp;
@@ -1869,6 +1878,10 @@ function applyTheme(t) {
 function storageText() {
   if (signedOut()) return 'Você não entrou. Nada é salvo: entre para guardar e sincronizar seus dados entre PC e celular.';
   if (S.auth.mode === 'local') return 'Modo local: os dados ficam só neste navegador (desenvolvimento). Exporte um backup de vez em quando.';
+  if (S.auth.mode === 'artifact') {
+    const sa = { synced: 'Sincronizado.', saving: 'Salvando alterações…', offline: 'Sem conexão: as alterações sobem quando voltar.', error: 'Houve um erro ao salvar' + (store && store.lastError ? ': ' + store.lastError : '.') }[S.status] || '';
+    return 'Dados guardados na sua conta do claude.ai (só você vê) e sincronizados entre os seus aparelhos. ' + sa;
+  }
   const st = { synced: 'Sincronizado com a sua conta.', saving: 'Salvando alterações…', offline: 'Sem conexão: as alterações ficam guardadas aqui e sobem quando a internet voltar.', error: 'Houve um erro ao salvar. Vamos tentar de novo.' }[S.status] || '';
   return (S.auth.user ? 'Conta: ' + S.auth.user.email + '. ' : '') + st;
 }
@@ -1898,6 +1911,7 @@ function openSettings(step) {
 function openAccountSheet() {
   if (S.auth.mode === 'netlify' && !S.auth.user) { doLogin(); return; }
   const u = S.auth.user;
+  if (S.auth.mode === 'artifact') { openSheet('<h2>Conta</h2>', `<p>Você está usando a sua conta do claude.ai.</p><p class="small muted">${esc(storageText())}</p>`, null, { kind: 'account', label: 'Conta' }); return; }
   openSheet('<h2>Conta</h2>', u ? `<p>Conectado como <b>${esc(u.email)}</b>.</p><p class="small muted">${esc(storageText())}</p>
       <div class="row end"><button class="btn" type="button" data-act="logout" id="btn-logout">Sair</button></div>`
     : `<p class="small muted">${esc(storageText())}</p>`, null, { kind: 'account', label: 'Conta' });
@@ -1910,14 +1924,21 @@ async function exportBackup() {
   try {
     await flushPersist();
     const obj = await store.exportAll();
-    const blob = new Blob([JSON.stringify(obj, null, 1)], { type: 'application/json' });
+    const name = 'financas-flow-backup-' + todayISO() + '.json';
+    const text = JSON.stringify(obj, null, 1);
+    // Artifact do claude.ai: <a download> é bloqueado; o store oferece o arquivo pelo runtime (downloads.save)
+    if (typeof store.saveFile === 'function' && (await store.saveFile(name, text)) !== false) { toast('Backup exportado.'); return; }
+    const blob = new Blob([text], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'financas-flow-backup-' + todayISO() + '.json'; a.rel = 'noopener';
+    a.href = url; a.download = name; a.rel = 'noopener';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
     toast('Backup exportado.');
-  } catch (e) { reportErr('Não consegui exportar (' + (e && e.message || e) + ').'); }
+  } catch (e) {
+    if (e && e.code === 'declined') { toast('Exportação cancelada.'); return; }
+    reportErr('Não consegui exportar (' + (e && (e.message || e.code) || e) + ').');
+  }
 }
 async function readBackup(file) {
   try {
