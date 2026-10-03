@@ -78,3 +78,9 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
 - Automated: `npm test` (test/engine_v22.test.js) and `python3 test/e2e/e2e_v22.py` (Artifact + local mode, 390/1280,
   light/dark; read-only run on the real snapshot when present; scenario X = review regressions: two devices changing the
   chart at once, refunds netting a category negative, labels at 390, re-importing files, a moved category). Screenshots: `screens/v22/`.
+
+## File pickers on phones
+- [ ] Claude app on Android: Importar shows "No app Claude para Android o seletor de arquivos não abre…" and the paste box is open.
+      Paste a CSV → import → "Colar outro arquivo" → paste the next one.
+- [ ] Chrome on Android: "Escolher arquivos" opens the picker; bank CSVs are not greyed out; "Importar backup" works.
+- Automated: `python3 test/e2e/e2e_mobile.py` (WebView / Android Chrome / desktop UAs at 390 px; screenshots in `screens/mobile/`).

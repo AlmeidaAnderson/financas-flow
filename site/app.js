@@ -1922,7 +1922,68 @@ function triageUndo() {
   toast('Desfeito: ' + u.label);
 }
 /* ================= IMPORTAR ================= */
-function newImp(){ return { tab:'arquivo', step:1, accountId: defaultAccountId(), newAcc:{ name:'', type:'credit_card' }, paste:'', fileName:'', encoding:'', analysis:null, profile:null, matched:null, result:null, dedup:null, checksum:'', layoutName:'', ai:null, aiProblems:[], done:null, hol:null, importId:null, err:'' }; }
+/* file pickers: Android WebViews (e.g. the Claude app) often do not implement the file chooser, so the tap does nothing.
+   Detected by UA up front, and at runtime (Android only): a tap on the picker that within 1.5 s neither hides/blurs the
+   page nor fires change (nor a later cancel) counts as "picker did not open". Either way a notice points to Chrome or to pasting. */
+const FILE_ACCEPT = '.csv,.txt,.tsv,.xlsx,.xls,text/*,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream';
+const BACKUP_ACCEPT = '.json,application/json,text/*,application/octet-stream';
+const UA = navigator.userAgent || '';
+const IS_ANDROID = /Android/i.test(UA);
+const IS_ANDROID_WV = IS_ANDROID && (/; wv\)/.test(UA) || /Version\/\d+\.\d+ Chrome\//.test(UA));
+const PICK = { failed: { 'imp-file': false, 'restore-file': false }, armed: null };
+const pickerBlocked = id => IS_ANDROID_WV || PICK.failed[id];
+function pickerNoticeHTML(id) {
+  const lead = IS_ANDROID_WV ? 'No app Claude para Android o seletor de arquivos não abre.' : 'O seletor de arquivos parece não ter aberto.';
+  const chrome = 'abra este app no Chrome: no app Claude, use o menu ⋮ ou Compartilhar → copiar link, cole no Chrome e entre na mesma conta — seus dados sincronizam';
+  return id === 'restore-file'
+    ? `<div class="banner" id="restore-notice" role="status"><div>${lead} Para importar o backup, ${chrome}.</div></div>`
+    : `<div class="banner" id="picker-notice" role="status"><div>${lead} Duas opções: <b>(1)</b> ${chrome}; <b>(2)</b> cole o conteúdo do arquivo abaixo.</div></div>`;
+}
+function armPicker(id) {
+  if (!IS_ANDROID || IS_ANDROID_WV || PICK.armed) return;
+  const st = { id, opened: false, at: Date.now() };
+  const mark = () => { st.opened = true; };
+  const onVis = () => { if (document.visibilityState === 'hidden') mark(); };
+  // a "cancel" right after the tap, with the page never hidden/blurred, is the WebView refusing the chooser
+  const onCancel = () => { if (!st.opened && Date.now() - st.at < 500) { clearTimeout(st.t); done(); } else mark(); };
+  const inp = document.getElementById(id);
+  window.addEventListener('blur', mark); document.addEventListener('visibilitychange', onVis);
+  if (inp) { inp.addEventListener('change', mark); inp.addEventListener('cancel', onCancel); }
+  PICK.armed = st;
+  const done = () => {
+    window.removeEventListener('blur', mark); document.removeEventListener('visibilitychange', onVis);
+    if (inp) { inp.removeEventListener('change', mark); inp.removeEventListener('cancel', onCancel); }
+    PICK.armed = null;
+    if (st.opened || PICK.failed[id]) return;
+    PICK.failed[id] = true;
+    if (id === 'imp-file') { if (S.imp) S.imp.pasteOpen = true; if (S.ui.tab === 'import') renderImport(); const ta = $('#imp-paste'); if (ta) ta.scrollIntoView({ block: 'center' }); }
+    else { const box = $('#restore-notice-box'); if (box) box.innerHTML = pickerNoticeHTML(id); }
+  };
+  st.t = setTimeout(done, 1500);
+}
+/** reads a File's bytes; falls back to FileReader when Blob.arrayBuffer is missing or fails (some WebViews) */
+async function readBytes(file) {
+  try { if (file.arrayBuffer) return new Uint8Array(await file.arrayBuffer()); } catch (e) { /* fall through */ }
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(new Uint8Array(fr.result));
+    fr.onerror = () => reject(new Error('o sistema não liberou o conteúdo do arquivo; tente de novo ou cole o conteúdo'));
+    try { fr.readAsArrayBuffer(file); } catch (e) { reject(new Error('o sistema não liberou o conteúdo do arquivo; tente de novo ou cole o conteúdo')); }
+  });
+}
+/** 'xlsx' | 'text' | error message: by extension first, then by content (Android may hand over odd names/MIME types) */
+function tableFileKind(file, bytes) {
+  const n = String(file.name || '').toLowerCase(); const ext = (/\.([a-z0-9]{1,5})$/.exec(n) || [])[1] || '';
+  const b = bytes || new Uint8Array(0);
+  const zip = b[0] === 0x50 && b[1] === 0x4b; const ole = b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0;
+  if (['xlsx', 'xls'].includes(ext) || zip || ole) return 'xlsx';
+  if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return 'PDF não é aceito; no app do banco, exporte como CSV ou XLSX';
+  if (['csv', 'txt', 'tsv'].includes(ext)) return 'text';
+  const head = Array.from(b.subarray(0, 2048)); const bin = head.filter(c => c === 0 || (c < 9) || (c > 13 && c < 32 && c !== 27)).length;
+  if (head.length && bin / head.length < 0.02) return 'text';
+  return 'este tipo de arquivo não é aceito (use CSV, TXT, TSV, XLSX ou XLS)';
+}
+function newImp(){ return { tab:'arquivo', step:1, accountId: defaultAccountId(), newAcc:{ name:'', type:'credit_card' }, paste:'', fileName:'', encoding:'', analysis:null, profile:null, matched:null, result:null, dedup:null, checksum:'', layoutName:'', ai:null, aiProblems:[], done:null, hol:null, importId:null, err:'', pasteOpen:false, reading:'', fromPaste:false, pasted:0 }; }
 function defaultAccountId(){ const a = (S.mode==='real' && S.real ? S.real.accounts : []).filter(a=>a.type!=='payslip'); return a.length ? a[0].id : '__new'; }
 function renderImport(){
   if(!S.imp) S.imp = newImp();
@@ -1955,15 +2016,18 @@ function renderStep1(b){
     </div>
     <div class="card">
       <h3>Envie o arquivo</h3>
+      <input type="file" id="imp-file" class="file-in" multiple accept="${FILE_ACCEPT}">
       <label class="drop" id="drop" for="imp-file">
         <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7 9l5-5 5 5M5 15v4h14v-4"/></svg>
         <b>Escolher arquivos</b><span class="small muted">CSV, TXT, TSV, XLSX ou XLS do seu banco ou cartão — um ou vários (faturas e extratos de meses diferentes)</span><span class="xs faint drop-hint">No computador, também dá para arrastar os arquivos para cá.</span>
-        <input type="file" id="imp-file" multiple accept=".csv,.txt,.tsv,.xlsx,.xls,text/csv,text/plain,text/tab-separated-values">
       </label>
-      ${I.fileName?`<p class="small muted">Último: ${esc(I.fileName)}</p>`:''}
-      <details ${I.paste?'open':''}><summary>Ou cole a tabela</summary>
-        <div class="field" style="margin-top:10px"><label for="imp-paste">Copie as linhas do internet banking ou da planilha e cole aqui</label><textarea id="imp-paste" placeholder="Data;Descrição;Valor&#10;05/09/2026;IFOOD *RESTAURANTE;-54,90">${esc(I.paste)}</textarea></div>
-        <div class="row end" style="margin-top:8px"><button class="btn primary" type="button" data-act="imp-paste">Analisar texto colado</button></div>
+      ${pickerBlocked('imp-file')?pickerNoticeHTML('imp-file'):''}
+      ${I.reading?`<p class="row small" id="imp-reading"><span class="spinner"></span> ${esc(I.reading)}</p>`:''}
+      ${I.fileName&&!I.reading?`<p class="small muted">Último: ${esc(I.fileName)}</p>`:''}
+      <details id="imp-paste-box" ${I.paste||I.pasteOpen||pickerBlocked('imp-file')?'open':''}><summary>Ou cole o conteúdo do arquivo</summary>
+        <div class="field" style="margin-top:10px"><label for="imp-paste">Abra o arquivo (ou o extrato no internet banking), copie tudo e cole aqui. Vários arquivos? Um de cada vez.</label><textarea id="imp-paste" spellcheck="false" autocomplete="off" placeholder="Data;Descrição;Valor&#10;05/09/2026;IFOOD *RESTAURANTE;-54,90">${esc(I.paste)}</textarea></div>
+        ${I.pasted?`<p class="xs muted" id="imp-pasted">${I.pasted} arquivo${I.pasted===1?'':'s'} colado${I.pasted===1?'':'s'} já importado${I.pasted===1?'':'s'}.</p>`:''}
+        <div class="row end" style="margin-top:8px"><button class="btn primary" type="button" data-act="imp-paste" ${I.reading?'disabled':''}>Analisar texto colado</button></div>
       </details>
       ${I.err?`<div class="banner err"><div>${esc(I.err)}</div></div>`:''}
     </div>
@@ -1987,32 +2051,27 @@ function commitNewAccount(){
 async function handleFile(file){
   const I = S.imp; I.err = '';
   if(!resolveAccount()){ renderImport(); return; }
-  I.fileName = file.name;
+  I.fileName = file.name; I.fromPaste = false;
+  I.reading = 'Lendo arquivo…'; renderImport();
   try{
-    const buf = await file.arrayBuffer();
-    let analysis;
-    if(/\.xlsx?$/i.test(file.name)){
-      const XLSX = await loadXLSX();
-      const wb = XLSX.read(new Uint8Array(buf), { type:'array', cellDates:false });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { header:1, raw:false, defval:'', blankrows:false }).map(r=>r.map(c=>c==null?'':String(c)));
-      I.encoding = 'Planilha Excel';
-      analysis = eng('analyzeRows', rows);
-    } else {
-      const dec = eng('decodeBytes', new Uint8Array(buf));
-      if(!dec) throw new Error('não consegui ler o texto do arquivo');
-      I.encoding = dec.encoding;
-      analysis = eng('analyzeTable', dec.text);
-    }
-    startAnalysis(analysis);
-  }catch(e){ I.err = 'Não consegui abrir "'+file.name+'": '+(e.message||e)+'. Se for PDF, exporte como CSV ou XLSX no app do banco.'; renderImport(); }
+    const r = await readFileAnalysis(file);
+    I.reading = '';
+    if(!r.analysis || !Array.isArray(r.analysis.rows)) throw new Error('não reconheci uma tabela');
+    I.encoding = r.encoding;
+    startAnalysis(r.analysis);
+  }catch(e){ I.reading = ''; I.err = 'Não consegui abrir "'+file.name+'": '+(e.message||e)+'. Se for PDF, exporte como CSV ou XLSX no app do banco.'; renderImport(); }
 }
 function handlePaste(){
   const I = S.imp; I.err = ''; I.paste = ($('#imp-paste')||{}).value || '';
   if(!resolveAccount()){ renderImport(); return; }
   if(!I.paste.trim()){ I.err = 'Cole pelo menos algumas linhas da tabela.'; renderImport(); return; }
-  I.fileName = 'texto colado'; I.encoding = 'texto colado';
-  startAnalysis(eng('analyzeTable', I.paste));
+  I.fileName = 'texto colado'; I.encoding = 'texto colado'; I.fromPaste = true;
+  I.reading = 'Analisando texto colado…'; renderImport();
+  // let the spinner paint before the (synchronous) analysis of a large paste
+  setTimeout(() => {
+    try { const a = eng('analyzeTable', I.paste); I.reading = ''; if(!a || !Array.isArray(a.rows)) throw new Error('não reconheci uma tabela'); startAnalysis(a); }
+    catch(e){ I.reading = ''; I.err = 'Não consegui ler o texto colado: '+(e.message||e)+'. Copie desde a linha de títulos (Data, Descrição, Valor…).'; renderImport(); }
+  }, 30);
 }
 function loadXLSX(){
   if(window.XLSX) return Promise.resolve(window.XLSX);
@@ -2250,7 +2309,7 @@ function renderImportDone(b){
     <div class="result-big"><span class="num">${d.imported}</span> importados</div>
     <p><b class="num in">${d.auto}</b> categorizados automaticamente · ${left?`<b class="num out" id="imp-left">${left}</b> para triagem`:'<b class="in" id="imp-left">tudo classificado ✓</b>'}</p>
     ${d.dup||d.err?`<p class="small muted">${d.dup} duplicado${d.dup===1?'':'s'} ignorado${d.dup===1?'':'s'}${d.err?` · ${d.err} linha${d.err>1?'s':''} com erro não importada${d.err>1?'s':''}`:''}</p>`:''}
-    <div class="row">${left?'<button class="btn primary" type="button" data-act="triage">Classificar agora</button>':''}<button class="btn" type="button" data-act="goto" data-tab="painel">Ver painel</button><button class="btn ghost" type="button" data-act="imp-reset">Importar outro</button></div></div>`;
+    <div class="row">${left?'<button class="btn primary" type="button" data-act="triage">Classificar agora</button>':''}<button class="btn" type="button" data-act="goto" data-tab="painel">Ver painel</button>${S.imp.fromPaste?'<button class="btn" type="button" data-act="imp-paste-again" id="imp-paste-again">Colar outro arquivo</button>':''}<button class="btn ghost" type="button" data-act="imp-reset">Importar outro</button></div></div>`;
 }
 
 /* ================= v2.2: several files at once (batch) ================= */
@@ -2259,15 +2318,17 @@ const kindMismatch = (kind, type) => (kind === 'extrato' && type === 'credit_car
 const kindAccType = kind => kind === 'fatura' ? 'credit_card' : 'checking';
 /** reads one file into a table analysis (CSV/TXT/TSV text or the first sheet of an XLSX/XLS) */
 async function readFileAnalysis(file) {
-  const buf = await file.arrayBuffer();
-  if (/\.xlsx?$/i.test(file.name)) {
+  const buf = await readBytes(file);
+  const kind = tableFileKind(file, buf);
+  if (kind !== 'xlsx' && kind !== 'text') throw new Error(kind);
+  if (kind === 'xlsx') {
     const XLSX = await loadXLSX();
-    const wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: false });
+    const wb = XLSX.read(buf, { type: 'array', cellDates: false });
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '', blankrows: false }).map(r => r.map(c => c == null ? '' : String(c)));
     return { encoding: 'Planilha Excel', analysis: eng('analyzeRows', rows) };
   }
-  const dec = eng('decodeBytes', new Uint8Array(buf));
+  const dec = eng('decodeBytes', buf);
   if (!dec) throw new Error('não consegui ler o texto do arquivo');
   return { encoding: dec.encoding, analysis: eng('analyzeTable', dec.text) };
 }
@@ -2401,7 +2462,7 @@ function renderBatch(b) {
       <p class="small muted">Cada arquivo vai para a conta escolhida. A importação segue a ordem das datas (mais antigo primeiro), então parcelas e repetidos são tratados como se você importasse um por vez.</p>
       ${B.busy ? '<p class="row small"><span class="spinner"></span> Lendo arquivos…</p>' : ''}
       <div class="bf-list" id="bf-list">${B.items.map(bfRowHTML).join('')}</div>
-      <label class="drop" id="drop" for="imp-file" style="padding:12px"><b>+ Adicionar arquivos</b><input type="file" id="imp-file" multiple accept=".csv,.txt,.tsv,.xlsx,.xls,text/csv,text/plain,text/tab-separated-values"></label>
+      <input type="file" id="imp-file" class="file-in" multiple accept="${FILE_ACCEPT}"><label class="drop" id="drop" for="imp-file" style="padding:12px"><b>+ Adicionar arquivos</b></label>
     </div>
     ${order.length > 1 ? `<p class="xs faint" id="bf-order">Ordem: ${order.map(it => esc(it.name)).join(' → ')}</p>` : ''}
     <div class="row end">${pending ? `<span class="small muted grow" id="bf-pending">${pending} arquivo${pending === 1 ? '' : 's'} ainda precisa${pending === 1 ? '' : 'm'} de conta, configuração ou não ${pending === 1 ? 'tem' : 'têm'} lançamentos novos.</span>` : ''}
@@ -2872,7 +2933,8 @@ function openSettings(step) {
     <div class="field" id="carry-set">${carrySettingsHTML()}</div>
     <div class="field"><span class="lbl">Backup</span>
       <div class="row"><button class="btn" type="button" data-act="export" id="btn-export" ${S.mode === 'real' && store ? '' : 'disabled'}>Exportar backup</button>
-      <label class="btn" for="restore-file" style="position:relative;overflow:hidden">Importar backup<input type="file" id="restore-file" accept=".json,application/json" style="position:absolute;inset:0;opacity:0;cursor:pointer"></label></div>
+      <input type="file" id="restore-file" class="file-in" accept="${BACKUP_ACCEPT}"><label class="btn" for="restore-file">Importar backup</label></div>
+      <div id="restore-notice-box">${pickerBlocked('restore-file') ? pickerNoticeHTML('restore-file') : ''}</div>
       <p class="xs faint">O backup é um arquivo JSON com tudo (lançamentos, contas, regras, layouts). "Importar backup" aceita também o backup da versão anterior.</p></div>
     <div class="field"><span class="lbl">Dados</span>${danger}</div>`, null, { kind: 'settings', label: 'Ajustes' });
 }
@@ -2910,7 +2972,14 @@ async function exportBackup() {
 }
 async function readBackup(file) {
   try {
-    const obj = JSON.parse(await file.text());
+    const n = String(file.name || '').toLowerCase();
+    if (/\.(csv|tsv|txt|xlsx?|pdf|ofx)$/.test(n)) throw new Error('escolha o arquivo .json do backup (exportado em "Exportar backup")');
+    toast('Lendo backup…');
+    const bytes = await readBytes(file);
+    const dec = eng('decodeBytes', bytes);
+    const text = dec ? dec.text : new TextDecoder().decode(bytes);
+    if (!/^\s*[{[]/.test(text)) throw new Error('o arquivo não é um backup JSON (exportado em "Exportar backup")');
+    let obj; try { obj = JSON.parse(text.replace(/^\uFEFF/, '')); } catch (e) { throw new Error('o JSON está incompleto ou corrompido'); }
     let stats = null;
     try { stats = store && store.parseBackup ? store.parseBackup(obj).stats : null; } catch (e) { throw e; }
     S._restore = { obj, stats };
@@ -3121,6 +3190,7 @@ const ACT = {
   'imp-num': el => { S.imp.profile.numberFormat = el.dataset.v; runPreview(); renderImport(); },
   'imp-ai': () => runAIProfile(),
   'imp-commit': () => commitImport(),
+  'imp-paste-again': () => { const P = S.imp; S.imp = newImp(); S.imp.tab = P.tab; S.imp.pasteOpen = true; S.imp.pasted = (P.pasted || 0) + 1; if (P.accountId && P.accountId !== '__new') S.imp.accountId = P.accountId; renderImport(); const ta = $('#imp-paste'); if (ta) { ta.focus(); ta.scrollIntoView({ block: 'center' }); } },
   'imp-reset': () => { const t = S.imp.tab; S.imp = newImp(); S.imp.tab = t; renderImport(); },
   'hol-add': () => { readHolerite(); S.imp.hol.others.push({ name: '', amount: '' }); renderHolerite(); },
   'hol-del': el => { readHolerite(); S.imp.hol.others.splice(+el.dataset.i, 1); renderHolerite(); },
@@ -3267,6 +3337,24 @@ document.addEventListener('change', ev => {
 document.addEventListener('toggle', ev => { const d = ev.target; if (d.classList && d.classList.contains('grp') && d.open) S.ui.openGroup = d.dataset.gid; }, true);
 document.addEventListener('dragover', ev => { const d = ev.target.closest && ev.target.closest('#drop'); if (d) { ev.preventDefault(); d.classList.add('over'); } });
 document.addEventListener('dragleave', ev => { const d = ev.target.closest && ev.target.closest('#drop'); if (d) d.classList.remove('over'); });
+/* file pickers: arm the "did it open?" check (Android) */
+document.addEventListener('click', ev => {
+  const l = ev.target.closest && ev.target.closest('label[for="imp-file"], label[for="restore-file"], #imp-file, #restore-file');
+  if (l) armPicker(l.id === 'imp-file' || l.id === 'restore-file' ? l.id : l.getAttribute('for'));
+}, true);
+/* pasting anywhere on the import screen (step 1) fills the paste box */
+document.addEventListener('paste', ev => {
+  if (S.ui.tab !== 'import' || !S.imp || S.imp.tab !== 'arquivo' || S.imp.step !== 1 || S.imp.batch || S.imp.done) return;
+  const t = ev.target; if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return;
+  const sc = $('#scr-import'); if (!sc || sc.hidden) return;
+  const txt = ev.clipboardData && ev.clipboardData.getData('text');
+  if (!txt || !txt.trim()) return;
+  ev.preventDefault();
+  S.imp.paste = txt; S.imp.pasteOpen = true; S.imp.err = '';
+  const ta = $('#imp-paste'); const box = $('#imp-paste-box');
+  if (ta && box) { box.open = true; ta.value = txt; ta.scrollIntoView({ block: 'center' }); } else renderImport();
+  toast('Texto colado — confira a conta e toque em "Analisar texto colado".');
+});
 document.addEventListener('drop', ev => { const d = ev.target.closest && ev.target.closest('#drop'); if (d) { ev.preventDefault(); d.classList.remove('over'); const fs = ev.dataTransfer && ev.dataTransfer.files; if (fs && fs.length) handleFiles(fs); } });
 /* category chart: hover/focus tooltip (touch: a tap opens the transactions) */
 document.addEventListener('pointermove', ev => {
