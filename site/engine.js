@@ -564,9 +564,30 @@
     grp('servicos', 'Serviços', '#6C8EAD', 'expense', [['telefone', 'Telefone'], ['bancos', 'Bancos/Tarifas'], ['seguros', 'Seguros'], ['software', 'Assinaturas de software']]),
     grp('pessoal', 'Pessoal', '#C08457', 'expense', [['beleza', 'Beleza'], ['pets', 'Pets'], ['doacoes', 'Doações']]),
     grp('impostos', 'Impostos', '#8D8F99', 'expense', [['ir', 'IR'], ['inss', 'INSS'], ['iof', 'IOF'], ['outros', 'Outros impostos']]),
+    // v2.2: "Não sei o que é" — spending the user cannot identify; counts as spending, leaves the triage queue for good
+    grp('outros', 'Outros', '#8A93A3', 'expense', [['nao_identificado', 'Não identificado']]),
     grp('investimentos', 'Investimentos', '#3BA99C', 'investment', [['aplicacoes', 'Aplicações']]),
     grp('renda', 'Renda', '#34A853', 'income', [['salario', 'Salário'], ['13', '13º salário'], ['ferias', 'Férias'], ['plr', 'PLR/Bônus'], ['beneficios', 'Benefícios VA/VR'], ['rendimentos', 'Rendimentos'], ['reembolsos', 'Reembolsos'], ['outros', 'Outros']])
   ];
+
+  const NAO_ID = 'outros.nao_identificado';
+  /** Adds the built-in group "Outros" › "Não identificado" to a taxonomy that lacks it (idempotent; never renames or
+   *  recolors what the user has). -> { categories, changed } */
+  function ensureBuiltinCategories(categories) {
+    const cats = isArr(categories) ? categories.slice() : DEFAULT_CATEGORIES.map(g => JSON.parse(JSON.stringify(g)));
+    const i = cats.findIndex(g => g && g.id === 'outros');
+    if (i < 0) {
+      const g = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES.find(x => x.id === 'outros')));
+      // keep income/investment groups at the end, like the default taxonomy
+      const at = cats.findIndex(x => x && (x.kind === 'investment' || x.kind === 'income'));
+      if (at < 0) cats.push(g); else cats.splice(at, 0, g);
+      return { categories: cats, changed: true };
+    }
+    const g = cats[i];
+    if ((g.children || []).some(c => c && c.id === NAO_ID)) return { categories: cats, changed: false };
+    cats[i] = Object.assign({}, g, { children: (g.children || []).concat([{ id: NAO_ID, name: 'Não identificado' }]) });
+    return { categories: cats, changed: true };
+  }
 
   // Dictionary source lines:
   //   "PATTERN|categoryId|kind?"        specific: auto-assigns the category
@@ -1990,7 +2011,9 @@
       for (const g of glist) {
         const gInfo = ci[g.gid];
         const id = 'grp:' + g.gid;
-        const name = g.gid === '__none' ? 'Sem categoria' : (gInfo ? gInfo.groupName : g.gid);
+        // the built-in "Outros" group holding only "Não identificado" is shown by that name
+        const onlyUnid = g.gid === 'outros' && [...g.children.keys()].every(k => k === NAO_ID);
+        const name = g.gid === '__none' ? 'Sem categoria' : onlyUnid ? 'Não identificado' : (gInfo ? gInfo.groupName : g.gid);
         const color = g.gid === '__none' ? NEUTRAL : (gInfo ? gInfo.color : NEUTRAL);
         addNode(id, name, color, 2);
         addLink(HUB, id, g.v);
@@ -2180,10 +2203,12 @@
     d.settings = Object.assign({ budgets: {} }, d.settings || {});
     d.categories = isArr(d.categories) && d.categories.length ? d.categories : DEFAULT_CATEGORIES.map(g => JSON.parse(JSON.stringify(g)));
     d.rules = isArr(d.rules) ? d.rules.slice() : [];
+    const eb = ensureBuiltinCategories(d.categories);
     d.history = isArr(d.history) ? d.history : [];
     d.accounts = isArr(d.accounts) ? d.accounts : [];
     d.profiles = isArr(d.profiles) ? d.profiles : [];
     const changedTx = new Set(), changedMeta = new Set();
+    if (eb.changed) { d.categories = eb.categories; changedMeta.add('categories'); }
     const report = { kinds: 0, merchants: 0, recategorized: 0, rulesCreated: 0, importsAdded: 0, updatedAt: 0, schemaFrom: d.settings.schemaVersion || 1 };
     const catIdx = buildCatIndex(d.categories);
     const merchantMap = new Map(); // old -> new (for learned rules)
@@ -2999,12 +3024,18 @@
       for (const t of effective(all)) {
         if (t.kind !== 'expense') continue;
         const m = monthOf(t.date);
-        const r = by[m] || (by[m] = { exp: 0, unc: 0 });
+        const r = by[m] || (by[m] = { exp: 0, unc: 0, unid: 0 });
         r.exp -= t.amount;
         if (!t.categoryId) r.unc -= t.amount;
+        else if (t.categoryId === NAO_ID) r.unid -= t.amount; // "Não sei o que é": counted apart, never as uncategorized
       }
       for (const m of Object.keys(by).sort()) {
         const r = by[m];
+        if (r.exp > 0 && r.unid > 0 && r.unid >= r.exp * 0.1) {
+          push({ id: 'l:unid:' + m, severity: 'info', title: Math.round(r.unid / r.exp * 100) + '% dos gastos de ' + monthName(m) + ' marcados como "Não identificado"',
+            detail: formatBRL(r.unid) + ' de ' + formatBRL(r.exp) + ' em ' + fmtM(m) + ' são gastos que você marcou como "Não sei o que é". Eles entram nos totais como "Não identificado"; reveja quando lembrar (Transações → filtro "Não identificado").',
+            months: [m], action: { type: 'filter-unid', label: 'Ver não identificados' } });
+        }
         if (r.exp > 0 && r.unc > r.exp * 0.25) {
           push({ id: 'l:uncat:' + m, severity: 'info', title: Math.round(r.unc / r.exp * 100) + '% dos gastos de ' + monthName(m) + ' sem categoria',
             detail: formatBRL(r.unc) + ' de ' + formatBRL(r.exp) + ' em ' + fmtM(m) + ' ainda não têm categoria. O fluxo do painel fica impreciso até você classificar.',
@@ -3037,6 +3068,172 @@
     const out = {};
     for (const w of warnings || []) if (w && (w.severity === 'blocking' || w.carryExclude)) for (const m of w.months || []) (out[m] = out[m] || []).push(w.title);
     return out;
+  }
+
+  // ---------------------------------------------------------------------------
+  // v2.2 — spending per category over time, multi-file import
+  // ---------------------------------------------------------------------------
+  const MES3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const GRANULARITIES = ['week', 'month', 'quarter', 'year'];
+  function utcDate(iso) { return new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10))); }
+  function isoOf(d) { return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()); }
+  /** The period (ISO week Mon–Sun, month, quarter or year) holding a date. -> { key, label, from, to } */
+  function periodOf(iso, granularity) {
+    const y = +iso.slice(0, 4), m = +iso.slice(5, 7), yy = String(y).slice(2);
+    if (granularity === 'week') {
+      const d = utcDate(iso), dow = (d.getUTCDay() + 6) % 7; // Monday = 0
+      const mon = new Date(d.getTime() - dow * 864e5), sun = new Date(mon.getTime() + 6 * 864e5);
+      const thu = new Date(mon.getTime() + 3 * 864e5), wy = thu.getUTCFullYear();
+      const week = Math.floor((thu - Date.UTC(wy, 0, 1)) / 864e5 / 7) + 1;
+      return { key: wy + '-W' + pad2(week), label: 'S' + week, from: isoOf(mon), to: isoOf(sun), year: wy };
+    }
+    if (granularity === 'quarter') {
+      const q = Math.ceil(m / 3), m0 = (q - 1) * 3 + 1;
+      return { key: y + '-T' + q, label: 'T' + q + '/' + yy, from: y + '-' + pad2(m0) + '-01', to: y + '-' + pad2(m0 + 2) + '-' + pad2(daysInMonth(y, m0 + 2)), year: y };
+    }
+    if (granularity === 'year') return { key: String(y), label: String(y), from: y + '-01-01', to: y + '-12-31', year: y };
+    return { key: y + '-' + pad2(m), label: MES3[m - 1] + '/' + yy, from: y + '-' + pad2(m) + '-01', to: y + '-' + pad2(m) + '-' + pad2(daysInMonth(y, m)), year: y };
+  }
+  /** The series a spending row belongs to before folding: '__none' (no category), the "Não identificado" category,
+   *  the group (level "group") or the category itself (level "category"). */
+  function categorySeriesKey(tx, opts) {
+    const cat = tx && tx.categoryId;
+    if (!cat) return '__none';
+    if (cat === NAO_ID) return NAO_ID;
+    if (opts && opts.level === 'category') return cat;
+    const ci = (opts && opts.catIndex) || (opts && opts.categories ? buildCatIndex(opts.categories) : DEFAULT_CAT_INDEX);
+    return ci[cat] ? ci[cat].group : String(cat).split('.')[0];
+  }
+  /** categorySeries(transactions, { granularity, periods (number | 'all'), end (date or 'YYYY-MM'), level: 'group'|'category',
+   *  groupId?, topN (default 7), categories }) -> { periods:[{key,label,from,to,total}], series:[{id,name,color,values,total,slot?,members?}] }
+   *  Spending only (kind "expense"; refunds net out, so a value can be negative); card payments, transfers and investments are
+   *  left out, as in summarize/buildSankey. Parcelas count in their own month (their date). Series beyond topN fold into
+   *  "Outros" ('__outros', with members); "Não identificado" and "Sem categoria" are never folded. Series come in the
+   *  taxonomy order (so stacks and legends keep each color in the same place), "Não identificado", "Sem categoria", "Outros" last. */
+  function categorySeries(transactions, opts) {
+    opts = opts || {};
+    const g = GRANULARITIES.includes(opts.granularity) ? opts.granularity : 'month';
+    const categories = opts.categories || DEFAULT_CATEGORIES;
+    const ci = buildCatIndex(categories);
+    const level = opts.level === 'category' && opts.groupId ? 'category' : 'group';
+    const groupId = level === 'category' ? opts.groupId : null;
+    const all = (transactions || []).filter(t => t && !t.deleted && /^\d{4}-\d{2}-\d{2}/.test(t.date || ''));
+    let spend = effective(all).filter(t => t.kind === 'expense');
+    if (level === 'category') spend = spend.filter(t => t.categoryId && t.categoryId !== NAO_ID && (ci[t.categoryId] ? ci[t.categoryId].group : String(t.categoryId).split('.')[0]) === groupId);
+    let end = opts.end ? String(opts.end) : null;
+    if (end && end.length === 7) end = end + '-' + pad2(daysInMonth(+end.slice(0, 4), +end.slice(5, 7)));
+    if (!end) end = spend.length ? spend.reduce((a, t) => (t.date > a ? t.date : a), '') : (nowParts().y + '-' + pad2(nowParts().m) + '-' + pad2(nowParts().d));
+    const list = [];
+    let p = periodOf(end, g);
+    const minDate = spend.length ? spend.reduce((a, t) => (t.date < a ? t.date : a), spend[0].date) : end;
+    const want = opts.periods === 'all' || opts.periods === 0 ? Infinity : Math.max(1, Math.floor(+opts.periods || 6));
+    for (let k = 0; k < Math.min(want, 600); k++) {
+      list.unshift(p);
+      if (want === Infinity && p.from <= minDate) break;
+      p = periodOf(addDays(p.from, -1), g);
+    }
+    const from = list[0].from, to = list[list.length - 1].to;
+    const idxOf = new Map(list.map((x, i) => [x.key, i]));
+    const vals = new Map();
+    for (const t of spend) {
+      if (t.date < from || t.date.slice(0, 10) > to) continue;
+      const i = idxOf.get(periodOf(t.date, g).key);
+      if (i == null) continue;
+      const k = categorySeriesKey(t, { level, catIndex: ci });
+      if (!vals.has(k)) vals.set(k, list.map(() => 0));
+      vals.get(k)[i] += -t.amount;
+    }
+    const gIdx = new Map(categories.map((x, i) => [x.id, i]));
+    const grp = categories.find(x => x.id === groupId) || null;
+    const kids = grp ? (grp.children || []).map(c => c.id) : [];
+    const meta = id => {
+      if (id === '__none') return { name: 'Sem categoria', color: null, order: 2e6 + 1 };
+      if (id === NAO_ID) return { name: 'Não identificado', color: (ci[NAO_ID] && ci[NAO_ID].color) || '#8A93A3', order: 2e6 };
+      if (level === 'category') {
+        if (id === groupId) return { name: (grp ? grp.name : id) + ' (geral)', color: grp ? grp.color : null, order: 1e6 - 1, slot: kids.length };
+        const c = ci[id]; const slot = kids.indexOf(id);
+        const own = grp && (grp.children || []).find(x => x.id === id);
+        return { name: c ? c.name : id, color: own && own.color ? own.color : null, order: slot >= 0 ? slot : 1e6, slot: slot >= 0 ? slot : null };
+      }
+      const c = ci[id];
+      return { name: c ? (id === 'outros' ? 'Outros (grupo)' : c.groupName) : id, color: c ? c.color : null, order: gIdx.has(id) ? gIdx.get(id) : 1e6 };
+    };
+    const sum = a => a.reduce((s, v) => s + v, 0);
+    let entries = [...vals.entries()].map(([id, values]) => Object.assign({ id, values, total: sum(values) }, meta(id))).filter(e => e.values.some(v => v !== 0));
+    const pinned = entries.filter(e => e.id === NAO_ID || e.id === '__none');
+    const regular = entries.filter(e => e.id !== NAO_ID && e.id !== '__none').sort((a, b) => b.total - a.total);
+    const topN = Math.max(1, Math.floor(+opts.topN || 7));
+    const keepN = Math.max(1, topN - pinned.length);
+    let kept = regular, folded = [];
+    if (regular.length > keepN + 1) { kept = regular.slice(0, keepN); folded = regular.slice(keepN); }
+    entries = kept.concat(pinned).sort((a, b) => a.order - b.order);
+    if (folded.length) {
+      const values = list.map((_, i) => folded.reduce((s, e) => s + e.values[i], 0));
+      entries.push({ id: '__outros', name: 'Outros', color: null, values, total: sum(values), members: folded.map(e => e.id) });
+    }
+    const series = entries.map(e => { const o = { id: e.id, name: e.name, color: e.color, values: e.values, total: e.total }; if (e.slot != null) o.slot = e.slot; if (e.members) o.members = e.members; return o; });
+    const periods = list.map((x, i) => ({ key: x.key, label: x.label, from: x.from, to: x.to, total: series.reduce((s, e) => s + e.values[i], 0) }));
+    return { periods, series, granularity: g, level, groupId };
+  }
+
+  /** Adds freshly parsed rows to the stored ones: links card payments across everything and classifies the new rows.
+   *  -> { added: [new rows, classified], changed: [stored rows whose kind/category/link changed] } */
+  function ingest(existing, fresh, ctx) {
+    ctx = ctx || {};
+    const live = (existing || []).filter(t => t && !t.deleted);
+    const linked = linkCardPayments(live.concat(fresh || []), ctx.accounts || []);
+    const freshIds = new Set((fresh || []).map(t => t.id));
+    const toClassify = linked.filter(t => freshIds.has(t.id));
+    const classified = classifyAll(toClassify, ctx);
+    const cmap = new Map();
+    classified.forEach((t, i) => {
+      const b = toClassify[i];
+      if (b && (b.kind === 'card_payment' || b.kind === 'transfer')) t.kind = b.kind;
+      cmap.set(t.id, t);
+    });
+    const prev = new Map(live.map(t => [t.id, t]));
+    const added = [], changed = [];
+    for (const t of linked) {
+      if (freshIds.has(t.id)) { added.push(cmap.get(t.id) || t); continue; }
+      const p = prev.get(t.id);
+      if (p && (p.kind !== t.kind || p.categoryId !== t.categoryId || p.linkedTo !== t.linkedTo)) changed.push(t);
+    }
+    return { added, changed };
+  }
+  /** Oldest file first: by the first date it holds, then the last, then the name. items: [{from, to, name}] */
+  function batchOrder(items) {
+    return (items || []).map((x, i) => ({ x, i })).sort((a, b) => {
+      const fa = a.x.from || '9999', fb = b.x.from || '9999';
+      return fa.localeCompare(fb) || String(a.x.to || '').localeCompare(String(b.x.to || '')) || String(a.x.name || '').localeCompare(String(b.x.name || '')) || a.i - b.i;
+    }).map(o => o.x);
+  }
+  /** importBatch(existing, [{ rows|text, profile, accountId, importId, name }], ctx) — imports several files as if they were
+   *  imported one by one, oldest first: each is parsed, deduped against what is stored plus the files before it (so the
+   *  parcela n+1 of the next fatura is new, and two identical tolls inside one fatura both stay) and ingested in turn.
+   *  Pure: nothing is written. -> { results: [{ importId, name, accountId, addedIds, duplicates, errors, total, from, to, count }]
+   *  (in import order), transactions: the final live list, addedIds, changedIds (stored rows that changed) } */
+  function importBatch(existing, items, ctx) {
+    const parsed = (items || []).map(it => {
+      const r = applyProfile(it.rows != null ? it.rows : it.text, it.profile, Object.assign({}, it.applyOpts || {}, { accountId: it.accountId, importId: it.importId }));
+      const ds = r.transactions.map(t => t.date).sort();
+      return { it, r, name: it.name || it.importId, from: ds[0] || null, to: ds[ds.length - 1] || null };
+    });
+    let cur = (existing || []).filter(t => t && !t.deleted);
+    const pre = new Set(cur.map(t => t.id));
+    const addedIds = new Set(), changedIds = new Set();
+    const results = [];
+    for (const p of batchOrder(parsed)) {
+      const dd = dedupe(cur, p.r.transactions);
+      const fresh = dd.fresh.map(t => Object.assign({}, t, { importId: p.it.importId }));
+      const ing = ingest(cur, fresh, ctx);
+      const ch = new Map(ing.changed.map(t => [t.id, t]));
+      cur = cur.map(t => ch.get(t.id) || t).concat(ing.added);
+      for (const t of ing.changed) if (pre.has(t.id)) changedIds.add(t.id);
+      for (const t of ing.added) addedIds.add(t.id);
+      results.push({ importId: p.it.importId, name: p.name, accountId: p.it.accountId, addedIds: ing.added.map(t => t.id), duplicates: dd.duplicates,
+        errors: p.r.errors, total: p.r.total, from: p.from, to: p.to, count: p.r.transactions.length });
+    }
+    return { results, transactions: cur, addedIds: [...addedIds], changedIds: [...changedIds] };
   }
 
   // ---------------------------------------------------------------------------
@@ -3157,7 +3354,7 @@
 
   // ---------------------------------------------------------------------------
   const FinEngine = {
-    version: '2.1.0',
+    version: '2.2.0',
     decodeBytes, analyzeTable, analyzeRows, profileFromAnalysis, applyProfile, matchProfile,
     parseAmount, detectNumberFormat, parseDate, normalizeDescription,
     DEFAULT_CATEGORIES, DEFAULT_DICTIONARY,
@@ -3171,6 +3368,8 @@
     // v2.1
     CNAE_MAP, suggestFromCNAE, findCNPJ, validCNPJ, formatCNPJ, searchQuery, installmentSeries, rememberInstallmentSeries, pruneSeriesRules, seriesRuleMatches: seriesMatches,
     carryover, dataHealth, blockingMonths, importKind, monthName, filePeriod,
+    // v2.2
+    NAO_ID, ensureBuiltinCategories, periodOf, categorySeries, categorySeriesKey, ingest, batchOrder, importBatch,
     lookupDictionaryEntry: (d, m, r, a) => lookupDictionaryEntry(d || DEFAULT_DICTIONARY, m, r, a),
     // extras (helpers, stable but not part of the contract)
     _internal: { parseDelimited, detectDelimiter, detectDateFormat, norm, stripAccents, hashStr, SKIP_PATTERNS, parseInstallmentText, detectKind }

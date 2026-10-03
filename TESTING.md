@@ -63,3 +63,17 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
 - Automated: `npm test` (test/engine_v21.test.js + /api/cnpj in functions.test.mjs) and `python3 test/e2e/e2e_v21.py`
   (synthetic data in the Artifact build at 390/1280 light/dark, Netlify build CNPJ lookup under CSP, and a read-only
   run on the real artifact snapshot when present). Screenshots: `screens/v21/`.
+
+## v2.2 (4 features) — 10 min
+- [ ] **Vários arquivos**: Importar → escolha 3 faturas + 1 extrato de uma vez (ou arraste no PC). Cada um mostra layout,
+      tipo (fatura/extrato), período, linhas, erros, duplicados e a conta. Ponha o extrato no cartão → aviso vermelho
+      "Conta errada?" → "Usar …"/"Criar conta corrente". Layout novo → "Configurar" → volta à lista. "Importar N arquivos"
+      → resumo por arquivo + "N para triagem". Parcela n+1 da fatura seguinte não vira duplicada.
+- [ ] **Gastos por categoria**: Painel → troque Gráfico (empilhadas, 100%, agrupadas, linhas, mapa de calor), Semana/Mês/
+      Trimestre/Ano, Períodos, Grupos/Categorias; toque na legenda para esconder; toque numa barra → lançamentos.
+      Recarregue (e abra no celular): a última escolha volta.
+- [ ] **Não sei o que é**: na triagem → sai da fila de vez (recarregue); Desfazer funciona; aparece como "Não identificado"
+      no gráfico e no filtro de Transações.
+- [ ] **Barra do mês fixa**: role o Painel → mês e período ficam presos sob o cabeçalho (compactos no celular).
+- Automated: `npm test` (test/engine_v22.test.js) and `python3 test/e2e/e2e_v22.py` (Artifact + local mode, 390/1280,
+  light/dark; read-only run on the real snapshot when present). Screenshots: `screens/v22/`.

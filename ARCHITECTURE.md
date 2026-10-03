@@ -74,3 +74,18 @@ The "local" adapter (localStorage) is used for dev, tests and when not signed in
 - Data-health notes: the running month's partial extrato is `info` with `carryExclude: true` (still out of the carry-over);
   coverage of an import uses the period in its file name when present; overlapping-import "repeats" are only checked between
   imports of the same kind and ignore rows reversed by an estorno; `dedupe` matches exact ids before fuzzy matches.
+
+## v2.2 additions
+- **Category** `outros.nao_identificado` ("Não identificado", built-in group "Outros", kind expense): "Não sei o que é" in
+  triage/editor. `FinEngine.ensureBuiltinCategories` adds it to any taxonomy (migration + on load; never renames/recolors).
+  Counts as spending (Sankey shows the group as "Não identificado"); data health counts it apart (`l:unid:<ym>`, info).
+- **settings.ui.categoryChart** (synced, field-wise merge; mirrored in localStorage `ff-catchart` for an instant reload;
+  the newer `updatedAt` wins): `{ type: stacked|pct|grouped|lines|heat, gran: week|month|quarter|year, range: 6|12|24|'all',
+  level: group|category, groupId|null, hidden: [seriesId], updatedAt }`.
+- **Imports index** records may carry `batch: true` (imported from the multi-file list). Profiles get `updatedAt`, and a
+  recognized layout's `defaultAccountId` follows the account picked in the batch when it fits the file kind.
+- Engine: `periodOf` (ISO weeks Mon–Sun "S38", "set/26", "T3/26", "2026"), `categorySeries`, `categorySeriesKey`,
+  `ingest` (link card payments + classify new rows; the app's addTransactions), `batchOrder`, `importBatch` (pure: files
+  oldest first, each deduped against stored rows + the files before it = importing one by one in date order).
+- Chart colors live in ONE table in app.js (`SHADES`): stored category hex → validated light/dark shade (dataviz
+  validate_palette.js; hue kept). Used by the Sankey and the category chart.
