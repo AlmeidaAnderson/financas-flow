@@ -575,17 +575,21 @@
    *  recolors what the user has). -> { categories, changed } */
   function ensureBuiltinCategories(categories) {
     const cats = isArr(categories) ? categories.slice() : DEFAULT_CATEGORIES.map(g => JSON.parse(JSON.stringify(g)));
+    // already there (in "Outros" or wherever the user moved it)
+    if (cats.some(g => g && (g.children || []).some(c => c && c.id === NAO_ID))) return { categories: cats, changed: false };
     const i = cats.findIndex(g => g && g.id === 'outros');
-    if (i < 0) {
-      const g = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES.find(x => x.id === 'outros')));
-      // keep income/investment groups at the end, like the default taxonomy
-      const at = cats.findIndex(x => x && (x.kind === 'investment' || x.kind === 'income'));
-      if (at < 0) cats.push(g); else cats.splice(at, 0, g);
+    if (i >= 0 && (cats[i].kind || 'expense') === 'expense') {
+      const g = cats[i];
+      cats[i] = Object.assign({}, g, { children: (g.children || []).concat([{ id: NAO_ID, name: 'Não identificado' }]) });
       return { categories: cats, changed: true };
     }
-    const g = cats[i];
-    if ((g.children || []).some(c => c && c.id === NAO_ID)) return { categories: cats, changed: false };
-    cats[i] = Object.assign({}, g, { children: (g.children || []).concat([{ id: NAO_ID, name: 'Não identificado' }]) });
+    // no group "outros" — or the user's own "outros" is an income/investment group, which must not hold spending:
+    // then a group of its own (the category id stays the same; the index maps it by membership)
+    const g = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES.find(x => x.id === 'outros')));
+    if (i >= 0) { const ids = new Set(cats.map(x => x && x.id)); let id = 'outros_gastos', k = 2; while (ids.has(id)) id = 'outros_gastos_' + (k++); g.id = id; }
+    // keep income/investment groups at the end, like the default taxonomy
+    const at = cats.findIndex(x => x && (x.kind === 'investment' || x.kind === 'income'));
+    if (at < 0) cats.push(g); else cats.splice(at, 0, g);
     return { categories: cats, changed: true };
   }
 
@@ -2012,7 +2016,7 @@
         const gInfo = ci[g.gid];
         const id = 'grp:' + g.gid;
         // the built-in "Outros" group holding only "Não identificado" is shown by that name
-        const onlyUnid = g.gid === 'outros' && [...g.children.keys()].every(k => k === NAO_ID);
+        const onlyUnid = g.children.size > 0 && [...g.children.keys()].every(k => k === NAO_ID);
         const name = g.gid === '__none' ? 'Sem categoria' : onlyUnid ? 'Não identificado' : (gInfo ? gInfo.groupName : g.gid);
         const color = g.gid === '__none' ? NEUTRAL : (gInfo ? gInfo.color : NEUTRAL);
         addNode(id, name, color, 2);
@@ -3156,7 +3160,7 @@
         return { name: c ? c.name : id, color: own && own.color ? own.color : null, order: slot >= 0 ? slot : 1e6, slot: slot >= 0 ? slot : null };
       }
       const c = ci[id];
-      return { name: c ? (id === 'outros' ? 'Outros (grupo)' : c.groupName) : id, color: c ? c.color : null, order: gIdx.has(id) ? gIdx.get(id) : 1e6 };
+      return { name: c ? (c.groupName === 'Outros' ? 'Outros (grupo)' : c.groupName) : id, color: c ? c.color : null, order: gIdx.has(id) ? gIdx.get(id) : 1e6 };
     };
     const sum = a => a.reduce((s, v) => s + v, 0);
     let entries = [...vals.entries()].map(([id, values]) => Object.assign({ id, values, total: sum(values) }, meta(id))).filter(e => e.values.some(v => v !== 0));

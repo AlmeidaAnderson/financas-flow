@@ -88,14 +88,20 @@
    * Objetos: campo a campo. Arrays de objetos com id: por id (inclusões dos dois lados ficam,
    * exclusões só se o outro lado não mexeu). Outros arrays: local + novidades remotas.
    * Valores simples: vence o local (é a ação mais recente do usuário neste aparelho).
+   * Objetos aninhados com updatedAt dos dois lados (uma regra, um layout, settings.ui.categoryChart) são uma
+   * unidade: vence o updatedAt mais novo inteiro — sem misturar campos de dois aparelhos.
    */
-  function merge3(base, local, remote) {
+  function merge3(base, local, remote, depth) {
+    depth = depth || 0;
     if (deepEqual(local, remote)) return clone(local);
     if (deepEqual(local, base)) return clone(remote);
     if (deepEqual(remote, base)) return clone(local);
     if (local === undefined) return base === undefined ? clone(remote) : undefined; // apagado aqui, mudado lá: respeita a exclusão só se lá não mudou (já tratado acima)
     if (remote === undefined) return base === undefined ? clone(local) : clone(local);
     if (isObj(local) && isObj(remote)) {
+      if (depth > 0 && typeof local.updatedAt === 'string' && typeof remote.updatedAt === 'string' && local.updatedAt !== remote.updatedAt) {
+        return clone(Date.parse(remote.updatedAt) > Date.parse(local.updatedAt) ? remote : local);
+      }
       var b = isObj(base) ? base : {};
       var out = {};
       var keys = Object.keys(local).concat(Object.keys(remote).filter(function (k) { return !(k in local); }));
@@ -103,7 +109,7 @@
         var l = local[k], r = remote[k], bb = b[k];
         if (l === undefined && r !== undefined) { if (bb !== undefined && deepEqual(r, bb)) return; out[k] = clone(r); return; }
         if (r === undefined && l !== undefined) { if (bb !== undefined && deepEqual(l, bb)) return; out[k] = clone(l); return; }
-        var m = merge3(bb, l, r); if (m !== undefined) out[k] = m;
+        var m = merge3(bb, l, r, depth + 1); if (m !== undefined) out[k] = m;
       });
       return out;
     }
@@ -116,7 +122,7 @@
       local.forEach(function (l) {
         var r = rm.get(l.id), bb = bm.get(l.id);
         if (r === undefined) { if (bb !== undefined && deepEqual(l, bb)) return; res.push(clone(l)); return; }
-        res.push(merge3(bb, l, r));
+        res.push(merge3(bb, l, r, depth + 1));
       });
       remote.forEach(function (r) {
         if (lm.has(r.id)) return;

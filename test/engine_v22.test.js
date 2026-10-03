@@ -189,3 +189,34 @@ test('v2.2 Não identificado: built-in category, migration adds it, Sankey names
   const u = hw.find(w => w.id === 'l:unid:2026-09');
   assert.ok(u && u.severity === 'info' && /80%/.test(u.title));
 });
+
+// ------------------------------------------------------------------ review regressions (synthetic)
+test('ensureBuiltinCategories: a user group "outros" for income never receives "Não identificado"; user groups untouched', () => {
+  const user = [
+    { id: 'casa', name: 'Casa', color: '#112233', kind: 'expense', children: [{ id: 'casa.reforma', name: 'Reforma' }] },
+    { id: 'outros', name: 'Outros', color: '#445566', kind: 'income', children: [{ id: 'outros.venda', name: 'Venda' }] }];
+  const before = JSON.parse(JSON.stringify(user));
+  const r = E.ensureBuiltinCategories(user);
+  assert.equal(r.changed, true);
+  assert.deepEqual(user, before, 'input not mutated');
+  assert.deepEqual(r.categories.filter(g => g.id === 'casa' || g.id === 'outros'), before, 'user groups unchanged');
+  const g = r.categories.find(x => (x.children || []).some(c => c.id === E.NAO_ID));
+  assert.ok(g && g.id !== 'outros' && g.kind === 'expense');
+  assert.ok(r.categories.indexOf(g) < r.categories.findIndex(x => x.id === 'outros'), 'before the income group');
+  const again = E.ensureBuiltinCategories(r.categories);
+  assert.equal(again.changed, false, 'idempotent');
+  // the row counts as spending, under "Não identificado", in the Sankey and the chart
+  const t = { id: 'a', date: '2026-09-02', amount: -5000, kind: 'expense', categoryId: E.NAO_ID, accountId: 'c' };
+  const sk = E.buildSankey([t], { from: '2026-09-01', to: '2026-09-30', categories: r.categories });
+  assert.ok(sk.nodes.some(n => n.name === 'Não identificado'));
+  const cs = E.categorySeries([t], { end: '2026-09', periods: 1, categories: r.categories });
+  assert.deepEqual(cs.series.map(s => [s.id, s.values[0]]), [[E.NAO_ID, 5000]]);
+});
+
+test('categorySeries: a category is counted in the group that holds it, whatever its id prefix', () => {
+  const cats = E.DEFAULT_CATEGORIES.map(g => g.id === 'lazer' ? Object.assign({}, g, { children: g.children.concat([{ id: 'meu.hobby', name: 'Hobby' }]) }) : g);
+  const t = { id: 'h', date: '2026-09-05', amount: -7700, kind: 'expense', categoryId: 'meu.hobby', accountId: 'c' };
+  assert.equal(E.categorySeries([t], { end: '2026-09', periods: 1, categories: cats }).series[0].id, 'lazer');
+  const lv = E.categorySeries([t], { end: '2026-09', periods: 1, categories: cats, level: 'category', groupId: 'lazer' });
+  assert.deepEqual(lv.series.map(s => s.id), ['meu.hobby']);
+});

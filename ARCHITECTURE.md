@@ -89,3 +89,10 @@ The "local" adapter (localStorage) is used for dev, tests and when not signed in
   oldest first, each deduped against stored rows + the files before it = importing one by one in date order).
 - Chart colors live in ONE table in app.js (`SHADES`): stored category hex → validated light/dark shade (dataviz
   validate_palette.js; hue kept). Used by the Sankey and the category chart.
+- Meta sync (review fix): `merge3` treats a NESTED object carrying `updatedAt` on both sides (a rule, a layout,
+  `settings.ui.categoryChart`) as one unit — the newer wins whole; the doc root still merges field-wise. When a remote meta
+  change arrives while this device's own write of that doc is still pending, the app 3-way merges it (base = the version it
+  last saw/sent, `P.metaBase`) instead of dropping it — two devices changing the chart at once now converge on the newest.
+- `ensureBuiltinCategories` adds a group of its own (`outros_gastos`) when the user's "outros" group is income/investment;
+  "Não sei o que é" always sets kind `expense`.
+

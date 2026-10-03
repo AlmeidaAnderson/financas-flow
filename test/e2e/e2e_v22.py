@@ -615,10 +615,114 @@ def scenario_real(b):
         ctx.close()
 
 
+def scenario_review(b):
+    """Regressions found in the independent review of v2.2 (synthetic data only)."""
+    section('X. review regressions: two devices, net refunds, label clipping, re-import, moved category')
+    meta, txs = synthetic()
+    meta = json.loads(json.dumps(meta))
+    # a refund larger than the month's Compras spending (Compras nets negative in set/26), and a category whose id does
+    # not start with its group's id (it lives in "Lazer")
+    txs = txs + [
+        {'id': 'v22-refund', 'date': '2026-09-25', 'amount': 90000, 'rawDescription': 'ESTORNO MARKETPLACE', 'merchant': 'ESTORNO MARKETPLACE',
+         'accountId': 'cartao', 'kind': 'expense', 'categoryId': 'compras.marketplace', 'catSource': 'manual', 'importId': 'imp-base', 'updatedAt': STAMP},
+        {'id': 'v22-hobby', 'date': '2026-09-26', 'amount': -7700, 'rawDescription': 'LOJA DE MODELISMO', 'merchant': 'LOJA DE MODELISMO',
+         'accountId': 'cartao', 'kind': 'expense', 'categoryId': 'meu.hobby', 'catSource': 'manual', 'importId': 'imp-base', 'updatedAt': STAMP},
+        # Moradia = R$ 23 mil in set/26 → the grouped bars' axis goes to 25 mil with a "12,5 mil" tick
+        {'id': 'v22-reforma', 'date': '2026-09-27', 'amount': -2050000, 'rawDescription': 'REFORMA COZINHA', 'merchant': 'REFORMA COZINHA',
+         'accountId': 'conta', 'kind': 'expense', 'categoryId': 'moradia.aluguel', 'catSource': 'manual', 'importId': 'imp-base', 'updatedAt': STAMP}]
+    cats = json.loads(subprocess.run(['node', '-e', 'console.log(JSON.stringify(require("./site/engine.js").DEFAULT_CATEGORIES))'],
+                                     cwd=ROOT, capture_output=True, text=True, check=True).stdout)
+    for g in cats:
+        if g['id'] == 'lazer':
+            g['children'].append({'id': 'meu.hobby', 'name': 'Hobby'})
+    meta['categories'] = {'items': cats}
+    ns = 'v22x' + RUN
+    seed_artifact(ns, meta, by_month(txs))
+    ca, A = open_artifact(b, ns, 'light', 390, 844)
+    cb, B = open_artifact(b, ns, 'dark', 1280, 900)
+    A._ns = B._ns = ns
+    # 1. two devices changing the chart at (almost) the same time converge on the newest choice, no ping-pong
+    set_month(A, '2026-09'); set_month(B, '2026-09')
+    B.select_option('#cc-type', 'heat'); A.select_option('#cc-type', 'lines')
+    flushed(A); flushed(B)
+    seen = []
+    for _ in range(8):
+        A.wait_for_timeout(500)
+        seen.append((chart_state(A)['P']['type'], chart_state(B)['P']['type']))
+    check(seen[-1] == ('lines', 'lines') and len(set(seen[-4:])) == 1, f'two devices converge on the newest chart choice ({seen})')
+    st = artifact_server.ns_state(ns)
+    n0 = sum(1 for x in st['log'] if x[1].endswith('v2meta/settings'))
+    A.wait_for_timeout(2500)
+    n1 = sum(1 for x in st['log'] if x[1].endswith('v2meta/settings'))
+    check(n1 == n0, f'…and then stop writing settings (no ping-pong: {n0} → {n1})')
+    reload(B); set_month(B, '2026-09')
+    check(chart_state(B)['P']['type'] == 'lines', 'the other device keeps the newest choice after reload')
+    A.select_option('#cc-type', 'stacked'); A.select_option('#cc-range', '12'); A.wait_for_timeout(300)
+    # 2. the number over a bar = net spending of the period = "Saídas" (refunds net out)
+    kpi = J(A, '() => +document.querySelector("#kpi-expense").dataset.cents')
+    last = J(A, '() => { const c = __ff.state()._cc, i = c.data.periods.length - 1; return { net: c.data.series.reduce((a, s) => a + s.values[i], 0), neg: c.data.series.some(s => s.values[i] < 0), lbl: [...document.querySelectorAll("#cc-chart .cc-tot")].find(t => +t.dataset.p === i).textContent }; }')
+    check(last['neg'] and last['net'] == kpi, f'a series nets negative in set/26 and the period net = Saídas ({last["net"]} = {kpi})')
+    check(last['lbl'] == J(A, '(c) => { const v = Math.abs(c) / 100; return (v / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " mil"; }', kpi), f'the bar label shows that net ({last["lbl"]})')
+    # 3. bar labels stay inside the plot (the last one was cut at 390 px)
+    out = J(A, '() => { const svg = document.querySelector("#cc-chart .cc-svg"); const w = +svg.getAttribute("width"); return [...svg.querySelectorAll(".cc-tot")].filter(t => { const bb = t.getBBox(); return bb.x < -0.5 || bb.x + bb.width > w + 0.5; }).length; }')
+    check(out == 0, f'390: no bar total label sticks out of the plot ({out})')
+    A.locator('#catchart-card').scroll_into_view_if_needed(); shot(A, 'review-390-labels')
+    # y-axis tick labels fit their column ("12,5 mil" lost its first digit in the grouped bars)
+    for typ in ('stacked', 'grouped', 'pct'):
+        A.select_option('#cc-type', typ); A.wait_for_timeout(250)
+        cut = J(A, '() => [...document.querySelectorAll("#cc-chart .cc-y text")].filter(t => t.getBBox().x < -0.5).map(t => t.textContent)')
+        ticks = J(A, '() => [...document.querySelectorAll("#cc-chart .cc-y text")].map(t => t.textContent)')
+        check(not cut, f'390 {typ}: y-axis labels not cut ({cut} of {ticks})')
+    A.select_option('#cc-type', 'stacked'); A.wait_for_timeout(200)
+    # 4. a category whose id does not start with its group's: the sheet lists its rows
+    A.click('[data-act="cc-level"][data-v="category"]'); A.wait_for_timeout(200)
+    A.select_option('#cc-group', 'lazer'); A.wait_for_timeout(250)
+    check('meu.hobby' in chart_state(A)['ids'], '"Hobby" (meu.hobby, inside Lazer) is a series of Lazer')
+    A.locator('#cc-chart .cc-seg[data-s="meu.hobby"]').last.click(); A.wait_for_selector('#sheet-body')
+    check(A.locator('#sheet-body .tx').count() == 1, f'its bar opens its transaction ({A.locator("#sheet-body .tx").count()})')
+    A.keyboard.press('Escape'); A.click('[data-act="cc-level"][data-v="group"]'); A.select_option('#cc-range', '6'); A.wait_for_timeout(200)
+    # 5. "Não sei o que é" on one device leaves the triage queue of the other
+    target = J(A, '() => __ff.live().find(t => t.rawDescription === "LOJA DONA CIDA")')
+    A.click('#triage-banner [data-act="triage"]'); A.wait_for_selector('#tri-card')
+    for _ in range(60):
+        if A.get_attribute('#tri-card', 'data-id') == target['id']:
+            break
+        A.click('[data-act="tri-skip"]')
+    A.click('#tri-unid'); A.wait_for_timeout(200); A.click('[data-act="tri-close"]')
+    flushed(A)
+    ok = wait(B, '(id) => { const t = __ff.live().find(x => x.id === id); return t && t.categoryId === "outros.nao_identificado"; }'.replace('(id)', '()').replace('x.id === id', 'x.id === ' + json.dumps(target['id'])), 15000)
+    check(ok, 'the other device sees it as "Não identificado" (synced)')
+    check(J(B, '(id) => __ff.live().find(t => t.id === id).kind', target['id']) == 'expense', '…still spending there')
+    # 6. re-importing files already imported: says so, adds nothing
+    goto_tab(A, 'import')
+    n_tx, n_imp = J(A, '() => __ff.live().length'), J(A, '() => Object.keys(__ff.D().imports).length')
+    A.set_input_files('#imp-file', [os.path.join(TMP, 'fatura-xp-2026-08.csv'), os.path.join(TMP, 'fatura-xp-2026-09.csv')])
+    A.wait_for_selector('#bf-list .bf >> nth=1')
+    A.click('[data-act="bf-reset"]'); A.wait_for_timeout(200)
+    check(J(A, '() => __ff.live().length') == n_tx and J(A, '() => Object.keys(__ff.D().imports).length') == n_imp, 'Cancelar adds nothing')
+    A.close(); B.close(); ca.close(); cb.close()
+    # import the two faturas, then choose them again
+    ctx, pg = open_artifact(b, ns, 'light', 390, 844)
+    pg._ns = ns
+    goto_tab(pg, 'import')
+    files = [os.path.join(TMP, 'fatura-xp-2026-09.csv'), os.path.join(TMP, 'fatura-xp-2026-08.csv')]
+    pg.set_input_files('#imp-file', files); pg.wait_for_selector('#bf-list .bf >> nth=1')
+    pg.click('#bf-import'); pg.wait_for_selector('#batch-done', timeout=10000)
+    n_tx, n_imp = J(pg, '() => __ff.live().length'), J(pg, '() => Object.keys(__ff.D().imports).length')
+    pg.click('[data-act="imp-reset"]'); pg.wait_for_timeout(200)
+    pg.set_input_files('#imp-file', files); pg.wait_for_selector('#bf-list .bf >> nth=1')
+    check(pg.locator('#bf-list [data-already]').count() == 2, 'files already imported are tagged "Já importado: nada novo"')
+    check(pg.is_disabled('#bf-import'), '…and there is nothing to import')
+    check(J(pg, '() => __ff.live().length') == n_tx and J(pg, '() => Object.keys(__ff.D().imports).length') == n_imp, '…nothing added, no import record')
+    no_hscroll(pg, 're-import list')
+    check(not pg._errs, f'no console errors {pg._errs[:3]}')
+    ctx.close()
+
+
 def main():
     srv = artifact_server.start(PORT)
     lsrv = site_server.start(LPORT)
-    only = sys.argv[1:] or ['A', 'L', 'R']
+    only = sys.argv[1:] or ['A', 'L', 'R', 'X']
     with sync_playwright() as p:
         b = p.chromium.launch()
         try:
@@ -628,6 +732,8 @@ def main():
                 scenario_local(b)
             if 'R' in only:
                 scenario_real(b)
+            if 'X' in only:
+                scenario_review(b)
         finally:
             b.close()
     srv.shutdown()

@@ -76,4 +76,5 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
       no gráfico e no filtro de Transações.
 - [ ] **Barra do mês fixa**: role o Painel → mês e período ficam presos sob o cabeçalho (compactos no celular).
 - Automated: `npm test` (test/engine_v22.test.js) and `python3 test/e2e/e2e_v22.py` (Artifact + local mode, 390/1280,
-  light/dark; read-only run on the real snapshot when present). Screenshots: `screens/v22/`.
+  light/dark; read-only run on the real snapshot when present; scenario X = review regressions: two devices changing the
+  chart at once, refunds netting a category negative, labels at 390, re-importing files, a moved category). Screenshots: `screens/v22/`.

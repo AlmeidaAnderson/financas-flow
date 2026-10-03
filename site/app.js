@@ -219,7 +219,10 @@ function noteRememberChoice(catId, remember, def) {
 /* ================= store glue ================= */
 let store = null;
 const META = ['settings', 'categories', 'rules', 'profiles', 'accounts', 'imports'];
-const P = { months: new Set(), meta: new Set(), timer: null, busy: false, again: false };
+const P = { months: new Set(), meta: new Set(), timer: null, busy: false, again: false, metaBase: {} };
+/** the last version of each meta doc this device saw from / sent to the store: the base of a 3-way merge when a remote
+ *  change arrives while our own write of that doc is still pending (else one device's change was silently lost) */
+const setMetaBase = (name, body) => { P.metaBase[name] = body == null ? undefined : clone(body); };
 
 function canPersist() {
   if (!store) return false;
@@ -273,7 +276,7 @@ async function flushPersist() {
   const months = [...P.months], meta = [...P.meta];
   P.months.clear(); P.meta.clear();
   try {
-    for (const n of meta) await store.saveMeta(n, metaBody(n));
+    for (const n of meta) { const body = metaBody(n); await store.saveMeta(n, body); setMetaBase(n, body); }
     for (const ym of months) {
       const rows = live().filter(t => ymOf(t.date) === ym);
       if (rows.length) await store.saveMonth(ym, rows); else await store.deleteMonth(ym);
@@ -321,6 +324,8 @@ async function loadFromStore(reason) {
   let all = null;
   try { all = await store.loadAll(); } catch (e) { reportErr('Não consegui carregar seus dados (' + (e && e.message || e) + ').'); all = null; }
   const d = flatFromLoad(all || {});
+  P.metaBase = {};
+  if (all && all.meta) META.forEach(n => setMetaBase(n, all.meta[n]));
   const hasData = d.txs.length || (d.accounts || []).length;
   if (!hasData) {
     S.real = d;
@@ -359,8 +364,20 @@ function applyRemote(ev) {
   const d = S.real;
   if (ev.kind === 'meta') {
     if (META.indexOf(ev.key) < 0) return;
-    if (P.meta.has(ev.key)) return; // our own pending write wins (the store merges server-side)
-    applyMeta(d, ev.key, ev.data);
+    if (P.meta.has(ev.key)) {
+      // our write of this doc is still pending: merge the remote change into it (3-way, base = what we last saw), keep
+      // it pending so the merge is what gets written. Ignoring it lost the other device's change: the store had already
+      // taken the remote version as its base, so our later save looked like a plain edit of it.
+      const lib = window.FinStoreLib;
+      if (!lib || !lib.merge3) return;
+      const m = lib.merge3(P.metaBase[ev.key], metaBody(ev.key, d), ev.data);
+      setMetaBase(ev.key, ev.data);
+      if (m === undefined) return;
+      applyMeta(d, ev.key, m);
+    } else {
+      applyMeta(d, ev.key, ev.data);
+      setMetaBase(ev.key, ev.data);
+    }
   } else if (ev.kind === 'month') {
     const ym = ev.key;
     const incoming = (ev.data || []).filter(t => t && t.id && !t.deleted);
@@ -1088,17 +1105,23 @@ function roundTop(x, y, w, h, r) {
   if (h <= 0) return '';
   return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
 }
+/** y-axis width that fits its widest tick label ("12,5 mil" was cut at the left edge; ≈6.2px per character at 10.5px) */
+function ccAxisW(ymax, fmt, min) { return Math.max(min, Math.ceil(Math.max(...[0, ymax / 2, ymax].map(t => String(fmt(t)).length)) * 6.2) + 10); }
 /** usable width inside the chart box */
 function ccAvail(el) { return Math.max(260, el.clientWidth || 340); }
 const ccMark = (attrs, s, p, extra) => `data-s="${esc(s)}" data-p="${p}" ${attrs || ''}${extra || ''}`;
 function ccBars(el, data, vis, P) {
   const pctMode = P.type === 'pct';
-  const n = data.periods.length, L = pctMode ? 38 : 46, T = 18, B = 26, H = 230;
+  const totals = data.periods.map((_, i) => vis.reduce((s, x) => s + Math.max(0, x.values[i]), 0));
+  const ymax0 = pctMode ? 1 : niceMax(Math.max(1, ...totals));
+  const n = data.periods.length, L = pctMode ? 38 : ccAxisW(ymax0, fmtK, 40), T = 18, B = 26, H = 230;
   const avail = ccAvail(el) - L;
   const band = Math.max(36, avail / n), plotW = Math.max(avail, band * n);
   const narrow = band < 48;
-  const totals = data.periods.map((_, i) => vis.reduce((s, x) => s + Math.max(0, x.values[i]), 0));
-  const ymax = pctMode ? 1 : niceMax(Math.max(1, ...totals));
+  // the number over a bar is the period's net spending of the visible series (refunds larger than a category's spending
+  // net out, as in the table and in "Saídas"); the bar itself can only stack the positive parts
+  const nets = data.periods.map((_, i) => vis.reduce((s, x) => s + x.values[i], 0));
+  const ymax = ymax0;
   const y = v => T + (H - T - B) * (1 - v / ymax);
   let svg = '';
   const bw = Math.min(24, Math.max(10, band * 0.56));
@@ -1107,7 +1130,7 @@ function ccBars(el, data, vis, P) {
     const tot = totals[i];
     let acc = 0;
     const segs = vis.map(s => ({ s, v: Math.max(0, s.values[i]) })).filter(o => o.v > 0);
-    svg += `<g class="cc-col" tabindex="0" role="button" data-act="cc-open" data-p="${i}" aria-label="${esc(ccPeriodName(p, P.gran))}: ${esc(brl(tot))}"><rect class="cc-hitcol" x="${(band * i).toFixed(1)}" y="${T}" width="${band.toFixed(1)}" height="${H - T - B}" fill="transparent"/>`;
+    svg += `<g class="cc-col" tabindex="0" role="button" data-act="cc-open" data-p="${i}" aria-label="${esc(ccPeriodName(p, P.gran))}: ${esc(brl(nets[i]))}"><rect class="cc-hitcol" x="${(band * i).toFixed(1)}" y="${T}" width="${band.toFixed(1)}" height="${H - T - B}" fill="transparent"/>`;
     segs.forEach((o, k) => {
       const v0 = pctMode ? acc / tot : acc, v1 = pctMode ? (acc + o.v) / tot : acc + o.v;
       acc += o.v;
@@ -1118,19 +1141,25 @@ function ccBars(el, data, vis, P) {
       if (h > 0) svg += `<path class="cc-seg${o.s.id === '__none' ? ' hatch' : ''}" d="${d}" fill="${esc(o.s.fill)}" ${ccMark('data-act="cc-open"', o.s.id, i)}/>`;
     });
     svg += '</g>';
-    if (!pctMode && tot > 0) svg += `<text x="${cx.toFixed(1)}" y="${(y(tot) - 5).toFixed(1)}" text-anchor="middle" class="cc-tot" data-act="cc-open" data-p="${i}">${esc(fmtK(tot))}</text>`;
+    if (!pctMode && tot > 0) {
+      // keep the label inside the plot: the first/last one would be cut at the edge (≈6px per character at 10.5px)
+      const lbl = (nets[i] < 0 ? '−' : '') + fmtK(nets[i]), half = lbl.length * 3.2 + 2;
+      const anchor = cx + half > plotW ? 'end' : cx - half < 0 ? 'start' : 'middle';
+      const tx = anchor === 'end' ? plotW - 1 : anchor === 'start' ? 1 : cx;
+      svg += `<text x="${tx.toFixed(1)}" y="${(y(tot) - 5).toFixed(1)}" text-anchor="${anchor}" class="cc-tot" data-act="cc-open" data-p="${i}">${esc(lbl)}</text>`;
+    }
     svg += `<text x="${cx.toFixed(1)}" y="${H - 8}" text-anchor="middle" class="cc-ax${i === n - 1 ? ' cur' : ''}">${esc(ccLabel(p, i, data.periods, P.gran, narrow))}</text>`;
   });
   ccFrame(el, H, L, T, B, ymax, pctMode ? (t => Math.round(t * 100) + '%') : (t => fmtK(t)), plotW, svg,
     (pctMode ? 'Participação de cada categoria nos gastos' : 'Gastos por categoria') + ' por ' + CC_GRAN.find(g => g[0] === P.gran)[1].toLowerCase());
 }
 function ccGrouped(el, data, vis, P) {
-  const n = data.periods.length, k = vis.length, L = 46, T = 14, B = 26, H = 230;
+  const ymax = niceMax(Math.max(1, ...vis.flatMap(s => s.values.map(v => Math.max(0, v)))));
+  const n = data.periods.length, k = vis.length, L = ccAxisW(ymax, fmtK, 40), T = 14, B = 26, H = 230;
   const gapIn = 2, bwMin = 5;
   const avail = ccAvail(el) - L;
   const band = Math.max(k * (bwMin + gapIn) + 12, avail / n), plotW = Math.max(avail, band * n);
   const narrow = band < 48;
-  const ymax = niceMax(Math.max(1, ...vis.flatMap(s => s.values.map(v => Math.max(0, v)))));
   const y = v => T + (H - T - B) * (1 - v / ymax);
   let svg = '';
   const bw = Math.min(14, Math.max(bwMin, (band - 12) / k - gapIn));
@@ -1243,13 +1272,15 @@ function ccTxs(sid, i) {
   const cc = S._cc; if (!cc) return [];
   const p = cc.data.periods[i]; if (!p) return [];
   const s = sid ? cc.data.series.find(x => x.id === sid) : null;
-  const opt = { level: cc.data.level, categories: D().categories };
+  // the same category → group mapping as FinEngine.categorySeries (built once, not once per row)
+  const ci = {}; for (const g of D().categories || []) { ci[g.id] = { group: g.id }; for (const c of g.children || []) ci[c.id] = { group: g.id }; }
+  const opt = { level: cc.data.level, catIndex: ci };
   const gid = cc.data.level === 'category' ? cc.data.groupId : null;
   const hidden = new Set(cc.P.hidden);
   const members = s && s.members ? new Set(s.members) : null;
   const shown = new Set(cc.data.series.filter(x => !hidden.has(x.id)).flatMap(x => x.members || [x.id]));
   return live().filter(t => countable(t) && t.kind === 'expense' && t.date >= p.from && t.date <= p.to).filter(t => {
-    if (gid && !(t.categoryId && t.categoryId !== E.NAO_ID && String(t.categoryId).split('.')[0] === gid)) return false;
+    if (gid && !(t.categoryId && t.categoryId !== E.NAO_ID && (ci[t.categoryId] ? ci[t.categoryId].group : String(t.categoryId).split('.')[0]) === gid)) return false;
     const k = E.categorySeriesKey(t, opt);
     if (!s) return shown.has(k);
     return members ? members.has(k) : k === s.id;
@@ -1262,7 +1293,7 @@ function ccOpen(sid, i) {
   const txs = ccTxs(sid, i).sort((a, b) => b.date.localeCompare(a.date));
   const hidden = new Set(cc.P.hidden);
   const tot = cc.data.series.filter(x => !hidden.has(x.id)).reduce((a, x) => a + Math.max(0, x.values[i]), 0);
-  const v = s ? s.values[i] : tot;
+  const v = s ? s.values[i] : cc.data.series.filter(x => !hidden.has(x.id)).reduce((a, x) => a + x.values[i], 0);
   let body = '';
   if (!s) {
     const rows = cc.data.series.filter(x => !hidden.has(x.id) && x.values[i] > 0).sort((a, b) => b.values[i] - a.values[i]);
@@ -1769,7 +1800,7 @@ function likelyGroups(t) {
   const kind = t.amount > 0 ? 'income' : 'expense';
   const freq = {}; live().forEach(x => { if (x.categoryId) { const g = String(x.categoryId).split('.')[0]; freq[g] = (freq[g] || 0) + 1; } });
   const sug = eng('classify', t, ctx()); const sugG = sug && sug.categoryId ? String(sug.categoryId).split('.')[0] : null;
-  const own = (D().categories || []).filter(g => (g.kind || 'expense') === kind && !(g.id === 'outros' && (g.children || []).every(c => c.id === NAO_ID)));
+  const own = (D().categories || []).filter(g => (g.kind || 'expense') === kind && !((g.children || []).length && (g.children || []).every(c => c.id === NAO_ID)));
   const other = t.amount > 0 ? (D().categories || []).filter(g => (g.kind || 'expense') !== kind) : [];
   return own.sort((a, b) => ((b.id === sugG) - (a.id === sugG)) || ((freq[b.id] || 0) - (freq[a.id] || 0))).concat(other).slice(0, 10);
 }
@@ -1832,7 +1863,7 @@ function renderTriage(timeUp) {
   </div></div>`;
 }
 const triState = () => ({ idx: TRI.idx, done: TRI.done, streak: TRI.streak });
-function triagePick(catId) {
+function triagePick(catId, extra) {
   const t = triageCurrent(); if (!t) return;
   const box = $('#tri-remember');
   const def = rememberDefault(t, catId);
@@ -1840,7 +1871,7 @@ function triagePick(catId) {
   if (TRI.touched) noteRememberChoice(catId, remember, def);
   const st = triState();
   const before = uncatCount();
-  const res = setCategory(t, catId, { remember });
+  const res = setCategory(t, catId, Object.assign({ remember }, extra || {}));
   const after = uncatCount();
   const label = catLabel(catId) + ' para ' + (t.merchant || t.rawDescription) + (res.created ? ' + regra' : '') + (res.series ? ' · ' + seriesLabel(res.series) : (res.n ? ' (+' + res.n + ')' : ''));
   if (res.series) toast(seriesLabel(res.series).replace(/^./, c => c.toUpperCase()));
@@ -1852,7 +1883,7 @@ function triagePick(catId) {
 /** "Não sei o que é": built-in category "Não identificado" — counts as spending and leaves the queue for good */
 function triageUnid() {
   const t = triageCurrent(); if (!t) return;
-  triagePick(NAO_ID);
+  triagePick(NAO_ID, { kind: 'expense' }); // always spending, whatever group holds the category
 }
 function editorUnid(id) {
   const t = txById(id); if (!t) return;
@@ -2333,7 +2364,8 @@ function bfRowHTML(it) {
   const layoutTag = it.err ? '<span class="tag err">Não abriu</span>'
     : it.matched ? `<span class="tag ok">Layout reconhecido: ${esc(it.matched.name.replace(/^Layout:\s*/, ''))}</span>`
       : it.configured ? `<span class="tag ok">Layout configurado${it.layoutName ? ': ' + esc(it.layoutName) : ''}</span>` : '<span class="tag warn">Novo layout</span>';
-  const kindTag = it.kind ? `<span class="tag acc">${KIND_LBL2[it.kind]}</span>` : (it.err ? '' : '<span class="tag">Tipo não identificado</span>');
+  const kindTag = (it.kind ? `<span class="tag acc">${KIND_LBL2[it.kind]}</span>` : (it.err ? '' : '<span class="tag">Tipo não identificado</span>'))
+    + (p && p.count > 0 && p.fresh === 0 && p.dups > 0 ? '<span class="tag warn" data-already>Já importado: nada novo</span>' : '');
   const at = bfAccType(it);
   const mis = it.kind && it.accountId && at && kindMismatch(it.kind, at);
   const right = mis ? accs.find(a => !kindMismatch(it.kind, a.type)) : null;

@@ -391,3 +391,15 @@ test('merge3 e mergeRows (unidade)', () => {
   const rows = mergeRows([{ id: 'a', updatedAt: '2026-01-02T00:00:00Z', v: 1 }], [{ id: 'a', updatedAt: '2026-01-01T00:00:00Z', v: 0 }, { id: 'b', deleted: true, updatedAt: '2020-01-01T00:00:00Z' }], T0);
   assert.deepEqual(rows, [{ id: 'a', updatedAt: '2026-01-02T00:00:00Z', v: 1 }]);
 });
+
+test('merge3: nested objects with updatedAt are one unit — the newest wins whole (settings.ui.categoryChart)', () => {
+  const base = { updatedAt: 'a', budgets: {}, ui: { categoryChart: { type: 'pct', gran: 'quarter', updatedAt: '2026-10-03T10:00:00.000Z' } } };
+  const local = { updatedAt: 'b', budgets: {}, ui: { categoryChart: { type: 'heat', gran: 'quarter', updatedAt: '2026-10-03T10:00:01.000Z' } } };
+  const remote = { updatedAt: 'c', budgets: { x: 1 }, ui: { categoryChart: { type: 'lines', gran: 'month', updatedAt: '2026-10-03T10:00:02.000Z' } } };
+  const m = merge3(base, local, remote);
+  assert.deepEqual(m.ui.categoryChart, remote.ui.categoryChart, 'newer remote wins whole, no mix of fields');
+  assert.deepEqual(m.budgets, { x: 1 }, 'other fields still merge field-wise');
+  assert.deepEqual(merge3(base, remote, local).ui.categoryChart, remote.ui.categoryChart, 'newer local wins whole');
+  // the document root keeps the field-wise merge even though it has updatedAt
+  assert.deepEqual(merge3({ a: 1, b: 1, updatedAt: '1' }, { a: 2, b: 1, updatedAt: '2' }, { a: 1, b: 3, updatedAt: '3' }), { a: 2, b: 3, updatedAt: '2' });
+});
