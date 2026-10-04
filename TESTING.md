@@ -80,7 +80,6 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
   chart at once, refunds netting a category negative, labels at 390, re-importing files, a moved category). Screenshots: `screens/v22/`.
 
 ## File pickers on phones
-- [ ] Claude app on Android: Importar shows "No app Claude para Android o seletor de arquivos não abre…" and the paste box is open.
-      Paste a CSV → import → "Colar outro arquivo" → paste the next one.
-- [ ] Chrome on Android: "Escolher arquivos" opens the picker; bank CSVs are not greyed out; "Importar backup" works.
-- Automated: `python3 test/e2e/e2e_mobile.py` (WebView / Android Chrome / desktop UAs at 390 px; screenshots in `screens/mobile/`).
+- [ ] On a phone: "Escolher arquivos" opens the picker; bank CSVs are not greyed out; "Importar backup" works.
+- [ ] Paste a CSV in "Ou cole o conteúdo do arquivo" → import → "Colar outro arquivo" → paste the next one.
+- Automated: `python3 test/e2e/e2e_mobile.py` (WebView / Android / desktop UAs at 390 px; screenshots in `screens/mobile/`).

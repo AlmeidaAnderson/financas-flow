@@ -1,8 +1,10 @@
 """End-to-end checks of the file pickers on phones (headless Chromium, 390 px):
-  W. Artifact build + Android WebView UA (Claude app): the "seletor não abre" notice shows under the drop zone, the paste
-     box is open; paste a CSV → wizard → import; "Colar outro arquivo" → a second paste → import; a ~100 KB paste does
-     not freeze the page; a paste event on the import screen fills the box. Ajustes shows the backup notice.
-  N. Android Chrome UA (not a WebView): no notice up front; a tap on the picker that does not open it (headless) → notice.
+  No screen ever shows a notice about the picker / using another app or browser (import screen and Ajustes backup).
+  W. Artifact build + Android WebView UA: no notice, the paste section is silently open; paste a CSV → wizard → import;
+     "Colar outro arquivo" → a second paste → import; a ~100 KB paste does not freeze the page; a paste event on the
+     import screen fills the box. Ajustes: no backup notice.
+  N. Android Chrome UA (not a WebView): paste section closed; a tap on the picker that does not open it (headless) →
+     the paste section opens, still no notice.
   C. site/ in local mode + desktop Chrome UA: no notice; setInputFiles with one file (wizard) and with two (batch list);
      an unsupported file (PDF) → clear error; inputs are visually hidden (not display:none), no overlay input;
      "Importar backup" via setInputFiles restores into a fresh browser.
@@ -123,6 +125,17 @@ def no_hscroll(pg, label):
     check(r[0] <= r[1], f'{label}: no horizontal page scroll ({r[0]} <= {r[1]})')
 
 
+NOTICE_RX = r'/chrome|app claude|seletor|não abre|parece não ter aberto|abra este app|copiar link/i'
+
+
+def no_notice(pg, label):
+    r = J(pg, '() => { const rx = ' + NOTICE_RX + '; const roots = [...document.querySelectorAll("#scr-import, .sheet, [role=dialog], #restore-file")].map(e => e.closest(".sheet, [role=dialog]") || e);'
+              ' const hits = [...document.querySelectorAll("#scr-import .banner, #scr-import [role=status], .sheet .banner, [role=dialog] .banner, #picker-notice, #restore-notice, #restore-notice-box")]'
+              '.map(e => e.textContent.trim()); const txt = roots.map(e => e.innerText || "").join("\\n").split("\\n").filter(l => rx.test(l));'
+              ' return { banners: hits, lines: txt }; }')
+    check(not r['banners'] and not r['lines'], f'{label}: no picker / other-app notice ({r["banners"][:2]} {r["lines"][:2]})')
+
+
 def input_hidden_ok(pg, sel, label):
     st = J(pg, '(s) => { const i = document.querySelector(s); if (!i) return null; const cs = getComputedStyle(i); const r = i.getBoundingClientRect();'
               ' return { disp: cs.display, w: r.width, h: r.height, inLabel: !!i.closest("label"), lbl: !!document.querySelector(`label[for="${i.id}"]`), accept: i.accept }; }', sel)
@@ -136,11 +149,8 @@ def scenario_webview(b):
     section('W. Artifact build, Android WebView UA (Claude app), 390 px')
     ctx, pg = open_artifact(b, UA_WV, 'mobw' + RUN)
     goto_import(pg)
-    check(pg.is_visible('#picker-notice'), 'notice visible right away')
-    txt = J(pg, '() => document.querySelector("#picker-notice").textContent')
-    check('No app Claude para Android o seletor de arquivos não abre' in txt and 'Chrome' in txt and 'cole o conteúdo' in txt, 'notice text names the Chrome and paste options')
-    check(J(pg, '() => { const n = document.querySelector("#picker-notice"), d = document.querySelector("#drop"); return !!(n && d && (d.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING)); }'), 'notice is under the drop zone')
-    check(J(pg, '() => document.querySelector("#imp-paste-box").open'), 'paste section is open')
+    no_notice(pg, 'wv import')
+    check(J(pg, '() => document.querySelector("#imp-paste-box").open'), 'paste section is open (WebView UA)')
     st = input_hidden_ok(pg, '#imp-file', 'wv')
     check(st and 'text/*' in st['accept'] and 'application/octet-stream' in st['accept'] and '.xlsx' in st['accept'], 'wide accept list')
     no_hscroll(pg, 'wv import')
@@ -185,7 +195,7 @@ def scenario_webview(b):
     check(rows == 2400, f'all 2400 rows read ({rows})')
     # backup notice in Ajustes
     pg.click('#btn-settings'); pg.wait_for_selector('#restore-file', state='attached')
-    check(pg.is_visible('#restore-notice'), 'Ajustes: backup notice (WebView) visible')
+    no_notice(pg, 'wv Ajustes')
     input_hidden_ok(pg, '#restore-file', 'wv backup')
     shot(pg, 'wv-settings-390')
     check(not pg._errs, f'no console errors {pg._errs[:3]}')
@@ -194,18 +204,19 @@ def scenario_webview(b):
 
 # ----------------------------------------------------------------------------------------------- N. Android Chrome
 def scenario_android_chrome(b):
-    section('N. Android Chrome UA: no notice up front; picker that does not open → notice')
+    section('N. Android Chrome UA: picker that does not open → paste section opens, no notice')
     ctx, pg = open_artifact(b, UA_ANDROID_CHROME, 'mobn' + RUN)
     goto_import(pg)
-    check(not pg.is_visible('#picker-notice'), 'no notice before tapping')
+    no_notice(pg, 'android before tap')
     check(not J(pg, '() => document.querySelector("#imp-paste-box").open'), 'paste section closed')
     pg.tap('#drop')
-    ok = wait(pg, '() => !!document.querySelector("#picker-notice")', 4000)
-    check(ok, 'tap that did not open a picker (no blur/visibilitychange/change in 1.5 s) → notice')
-    if ok:
-        txt = J(pg, '() => document.querySelector("#picker-notice").textContent')
-        check('parece não ter aberto' in txt, 'runtime notice wording does not claim it is the Claude app')
-        check(J(pg, '() => document.querySelector("#imp-paste-box").open'), 'paste section opened')
+    ok = wait(pg, '() => document.querySelector("#imp-paste-box").open', 4000)
+    check(ok, 'tap that did not open a picker (no blur/visibilitychange/change in 1.5 s) → paste section opens')
+    pg.wait_for_timeout(300)
+    no_notice(pg, 'android after failed tap')
+    pg.click('#btn-settings'); pg.wait_for_selector('#restore-file', state='attached')
+    pg.tap('label[for="restore-file"]'); pg.wait_for_timeout(1900)
+    no_notice(pg, 'android Ajustes after failed tap')
     shot(pg, 'android-chrome-failed-390')
     check(not pg._errs, f'no console errors {pg._errs[:3]}')
     ctx.close()
@@ -216,7 +227,7 @@ def scenario_chrome(b):
     section('C. site/ local mode, desktop Chrome UA')
     ctx, pg = open_local(b, UA_DESKTOP)
     goto_import(pg)
-    check(not pg.is_visible('#picker-notice'), 'no notice')
+    no_notice(pg, 'chrome import')
     input_hidden_ok(pg, '#imp-file', 'chrome')
     check(J(pg, '() => !document.querySelector(".drop input")'), 'no input overlaid inside the drop zone')
     f1 = os.path.join(TMP, 'extrato-ago.csv'); open(f1, 'w', encoding='utf-8').write(CSV1)
@@ -257,7 +268,7 @@ def scenario_chrome(b):
     ctx, pg = open_local(b, UA_DESKTOP)
     check(J(pg, '() => __ff.live().filter(t => /PADARIA MOBTEST/.test(t.rawDescription)).length') == 0, 'fresh browser starts without the data')
     pg.click('#btn-settings'); pg.wait_for_selector('#restore-file', state='attached')
-    check(not pg.is_visible('#restore-notice'), 'no backup notice on desktop Chrome')
+    no_notice(pg, 'chrome Ajustes')
     input_hidden_ok(pg, '#restore-file', 'chrome backup')
     pg.set_input_files('#restore-file', bk)
     pg.wait_for_selector('#restore-confirm', timeout=8000)

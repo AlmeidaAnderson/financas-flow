@@ -1922,25 +1922,18 @@ function triageUndo() {
   toast('Desfeito: ' + u.label);
 }
 /* ================= IMPORTAR ================= */
-/* file pickers: Android WebViews (e.g. the Claude app) often do not implement the file chooser, so the tap does nothing.
-   Detected by UA up front, and at runtime (Android only): a tap on the picker that within 1.5 s neither hides/blurs the
-   page nor fires change (nor a later cancel) counts as "picker did not open". Either way a notice points to Chrome or to pasting. */
+/* file pickers: some Android WebViews do not implement the file chooser, so the tap does nothing. Detected by UA up
+   front, and at runtime (Android only): a tap on the picker that within 1.5 s neither hides/blurs the page nor fires
+   change (nor a later cancel) counts as "picker did not open". The only effect is that the paste section opens (no text). */
 const FILE_ACCEPT = '.csv,.txt,.tsv,.xlsx,.xls,text/*,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream';
 const BACKUP_ACCEPT = '.json,application/json,text/*,application/octet-stream';
 const UA = navigator.userAgent || '';
 const IS_ANDROID = /Android/i.test(UA);
 const IS_ANDROID_WV = IS_ANDROID && (/; wv\)/.test(UA) || /Version\/\d+\.\d+ Chrome\//.test(UA));
-const PICK = { failed: { 'imp-file': false, 'restore-file': false }, armed: null };
-const pickerBlocked = id => IS_ANDROID_WV || PICK.failed[id];
-function pickerNoticeHTML(id) {
-  const lead = IS_ANDROID_WV ? 'No app Claude para Android o seletor de arquivos não abre.' : 'O seletor de arquivos parece não ter aberto.';
-  const chrome = 'abra este app no Chrome: no app Claude, use o menu ⋮ ou Compartilhar → copiar link, cole no Chrome e entre na mesma conta — seus dados sincronizam';
-  return id === 'restore-file'
-    ? `<div class="banner" id="restore-notice" role="status"><div>${lead} Para importar o backup, ${chrome}.</div></div>`
-    : `<div class="banner" id="picker-notice" role="status"><div>${lead} Duas opções: <b>(1)</b> ${chrome}; <b>(2)</b> cole o conteúdo do arquivo abaixo.</div></div>`;
-}
+const PICK = { failed: false, armed: null };
+const pickerBlocked = () => IS_ANDROID_WV || PICK.failed;
 function armPicker(id) {
-  if (!IS_ANDROID || IS_ANDROID_WV || PICK.armed) return;
+  if (id !== 'imp-file' || !IS_ANDROID || IS_ANDROID_WV || PICK.armed) return;
   const st = { id, opened: false, at: Date.now() };
   const mark = () => { st.opened = true; };
   const onVis = () => { if (document.visibilityState === 'hidden') mark(); };
@@ -1954,10 +1947,10 @@ function armPicker(id) {
     window.removeEventListener('blur', mark); document.removeEventListener('visibilitychange', onVis);
     if (inp) { inp.removeEventListener('change', mark); inp.removeEventListener('cancel', onCancel); }
     PICK.armed = null;
-    if (st.opened || PICK.failed[id]) return;
-    PICK.failed[id] = true;
-    if (id === 'imp-file') { if (S.imp) S.imp.pasteOpen = true; if (S.ui.tab === 'import') renderImport(); const ta = $('#imp-paste'); if (ta) ta.scrollIntoView({ block: 'center' }); }
-    else { const box = $('#restore-notice-box'); if (box) box.innerHTML = pickerNoticeHTML(id); }
+    if (st.opened || PICK.failed) return;
+    PICK.failed = true;
+    if (S.imp) S.imp.pasteOpen = true;
+    const box = $('#imp-paste-box'); if (box) box.open = true;
   };
   st.t = setTimeout(done, 1500);
 }
@@ -2021,10 +2014,9 @@ function renderStep1(b){
         <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7 9l5-5 5 5M5 15v4h14v-4"/></svg>
         <b>Escolher arquivos</b><span class="small muted">CSV, TXT, TSV, XLSX ou XLS do seu banco ou cartão — um ou vários (faturas e extratos de meses diferentes)</span><span class="xs faint drop-hint">No computador, também dá para arrastar os arquivos para cá.</span>
       </label>
-      ${pickerBlocked('imp-file')?pickerNoticeHTML('imp-file'):''}
       ${I.reading?`<p class="row small" id="imp-reading"><span class="spinner"></span> ${esc(I.reading)}</p>`:''}
       ${I.fileName&&!I.reading?`<p class="small muted">Último: ${esc(I.fileName)}</p>`:''}
-      <details id="imp-paste-box" ${I.paste||I.pasteOpen||pickerBlocked('imp-file')?'open':''}><summary>Ou cole o conteúdo do arquivo</summary>
+      <details id="imp-paste-box" ${I.paste||I.pasteOpen||pickerBlocked()?'open':''}><summary>Ou cole o conteúdo do arquivo</summary>
         <div class="field" style="margin-top:10px"><label for="imp-paste">Abra o arquivo (ou o extrato no internet banking), copie tudo e cole aqui. Vários arquivos? Um de cada vez.</label><textarea id="imp-paste" spellcheck="false" autocomplete="off" placeholder="Data;Descrição;Valor&#10;05/09/2026;IFOOD *RESTAURANTE;-54,90">${esc(I.paste)}</textarea></div>
         ${I.pasted?`<p class="xs muted" id="imp-pasted">${I.pasted} arquivo${I.pasted===1?'':'s'} colado${I.pasted===1?'':'s'} já importado${I.pasted===1?'':'s'}.</p>`:''}
         <div class="row end" style="margin-top:8px"><button class="btn primary" type="button" data-act="imp-paste" ${I.reading?'disabled':''}>Analisar texto colado</button></div>
@@ -2934,7 +2926,6 @@ function openSettings(step) {
     <div class="field"><span class="lbl">Backup</span>
       <div class="row"><button class="btn" type="button" data-act="export" id="btn-export" ${S.mode === 'real' && store ? '' : 'disabled'}>Exportar backup</button>
       <input type="file" id="restore-file" class="file-in" accept="${BACKUP_ACCEPT}"><label class="btn" for="restore-file">Importar backup</label></div>
-      <div id="restore-notice-box">${pickerBlocked('restore-file') ? pickerNoticeHTML('restore-file') : ''}</div>
       <p class="xs faint">O backup é um arquivo JSON com tudo (lançamentos, contas, regras, layouts). "Importar backup" aceita também o backup da versão anterior.</p></div>
     <div class="field"><span class="lbl">Dados</span>${danger}</div>`, null, { kind: 'settings', label: 'Ajustes' });
 }
