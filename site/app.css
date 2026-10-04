@@ -488,3 +488,16 @@ input.invalid{border-color:var(--out)!important}
 .tx .ck{flex:none;width:22px;height:22px;margin-top:6px;border-radius:6px;border:2px solid var(--line-2);display:grid;place-items:center;font-size:.8rem;font-weight:800;color:var(--accent-ink)}
 .tx[aria-pressed="true"] .ck{background:var(--accent);border-color:var(--accent)}
 .tx[aria-pressed="true"]{background:var(--accent-soft)}
+/* v2.4b — PDF import + foreign currencies */
+.pn-fx{flex:1 1 220px;display:flex;flex-direction:column;align-items:flex-start;gap:2px;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:8px 12px;font-size:.88rem;cursor:pointer;text-align:left;color:var(--ink);min-height:38px;min-width:0;max-width:100%;overflow-wrap:anywhere}
+.tx .meta .fxb,.fxb{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink);background:var(--surface-2,rgba(127,127,127,.12));border:1px solid var(--line);border-radius:6px;padding:0 5px;white-space:nowrap}
+.pdf-pw{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface)}
+.pdf-pw input{max-width:320px}
+.pdf-pw [aria-invalid="true"],.fx-grid [aria-invalid="true"]{border-color:var(--out)}
+.pdf-ex{border:1px dashed var(--line);border-radius:12px;padding:8px 12px;min-width:0}
+.pdf-ex summary{cursor:pointer;font-size:.86rem;color:var(--ink-2);overflow-wrap:anywhere}
+.pdf-ex-g{display:flex;flex-direction:column;gap:2px;margin-top:8px;min-width:0}
+.pdf-ex-l{font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;word-break:break-word}
+.fx-rates{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface)}
+.fx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+#pdf-detect .det .v{overflow-wrap:anywhere}

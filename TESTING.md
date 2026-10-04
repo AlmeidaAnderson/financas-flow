@@ -115,3 +115,22 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
   screens; local mode 390 light full flow + 1280 dark; plans checked on the real snapshot when present — prints only counts;
   Netlify build with /api/cnpj mocked, CSP on).
   Screenshots: `screens/v24a/`.
+
+## v2.4b — PDF e moedas estrangeiras (10 min)
+- [ ] Importar → escolha a fatura em PDF → "Lendo PDF… página x de y" → Detecção mostra tipo, vencimento, compras do
+      ciclo, total e "✓ total bate"; abra "Ignorado: …" e confira que resumo, ofertas de parcelamento e próximas faturas
+      ficaram de fora. Conferência: tabela com a Seção de cada linha; total já preenchido.
+- [ ] Cartão sem dia de fechamento → depois de importar: "Cartão configurado pela fatura".
+- [ ] PDF com senha → campo "Senha do PDF" → senha errada avisa; certa abre (a senha não fica salva).
+- [ ] PDF digitalizado (foto) → mensagem clara de que não tem texto.
+- [ ] Vale (VA/VR): conta "Benefício (VA/VR)"; transferências entre carteiras = Transferência (somam zero); créditos =
+      Renda › Benefícios; compras com a carteira (Refeição/Alimentação) e horário.
+- [ ] Compras internacionais: selo "US$ 12,99" na linha, filtro "Moeda estrangeira", Painel "Compras internacionais".
+- [ ] Conta só em moeda estrangeira: informe a cotação de cada mês na conferência; Ajustes → Cotações recalcula.
+- [ ] Vários arquivos: PDFs e CSVs juntos na mesma lista.
+- Automated: `npm test` (test/engine_v24b.test.js: synthetic item lists, the synthetic PDFs of test/fixtures/pdf via
+  pdfjs-dist, and the two real PDFs when present at `FF_REAL_PDF_DIR` — only counts asserted) and
+  `python3 test/e2e/e2e_v24b.py` (Artifact build under a CSP equal to the claude.ai allowlist — the sandbox cannot reach
+  cdnjs, so the same pinned pdf.js files are served at the cdnjs URL by route interception —, 390/1280 light/dark, local
+  mode with the vendored worker, Netlify harness with the real CSP, real samples when present). Fixtures:
+  `python3 test/fixtures/pdf/make_pdfs.py` (reportlab; all data made up). Screenshots: `screens/v24b/`.

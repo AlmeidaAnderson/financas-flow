@@ -6,7 +6,7 @@
   N. Android Chrome UA (not a WebView): paste section closed; a tap on the picker that does not open it (headless) →
      the paste section opens, still no notice.
   C. site/ in local mode + desktop Chrome UA: no notice; setInputFiles with one file (wizard) and with two (batch list);
-     an unsupported file (PDF) → clear error; inputs are visually hidden (not display:none), no overlay input;
+     a broken PDF → clear error (v2.4b: PDFs are read); inputs are visually hidden (not display:none), no overlay input;
      "Importar backup" via setInputFiles restores into a fresh browser.
 Usage: npm run build:artifact && python3 test/e2e/e2e_mobile.py      Screenshots: screens/mobile/*.png (gitignored)."""
 import sys, os, json, re, time, tempfile
@@ -234,11 +234,11 @@ def scenario_chrome(b):
     f2 = os.path.join(TMP, 'extrato-set.csv'); open(f2, 'w', encoding='utf-8').write(CSV2)
     pdf = os.path.join(TMP, 'fatura.pdf'); open(pdf, 'wb').write(b'%PDF-1.4\n1 0 obj<<>>endobj\n%%EOF\n')
     noext = os.path.join(TMP, 'download'); open(noext, 'w', encoding='utf-8').write(CSV2)
-    # unsupported file
+    # a broken PDF (v2.4b reads PDFs; this one has no pages)
     new_account(pg, 'Conta arquivo')
     pg.set_input_files('#imp-file', pdf)
     pg.wait_for_selector('#scr-import .banner.err', timeout=8000)
-    check('PDF' in J(pg, '() => document.querySelector("#scr-import .banner.err").textContent'), 'PDF → clear error')
+    check('PDF' in J(pg, '() => document.querySelector("#scr-import .banner.err").textContent'), 'broken PDF → clear error')
     # single file
     new_account(pg, 'Conta arquivo')
     pg.set_input_files('#imp-file', f1)

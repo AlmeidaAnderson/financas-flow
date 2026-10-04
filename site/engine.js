@@ -177,6 +177,10 @@
   // ---------------------------------------------------------------------------
   // Numbers
   // ---------------------------------------------------------------------------
+  // v2.4b: currency markers stripped before parsing (the currency itself is read by currencyOf)
+  const ISO_CODES = ['BRL', 'USD', 'EUR', 'GBP', 'ARS', 'CLP', 'UYU', 'PYG', 'MXN', 'COP', 'PEN', 'BOB', 'CAD', 'AUD', 'NZD', 'JPY', 'CNY', 'CHF',
+    'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF', 'TRY', 'ZAR', 'INR', 'KRW', 'HKD', 'SGD', 'AED', 'ILS', 'THB'];
+  const CUR_STRIP_RE = new RegExp('R\\$|US\\$|U\\$|€|£|¥|\\b(?:' + ISO_CODES.join('|') + ')\\b|\\$', 'g');
   /** Parses money strings into cents. numberFormat "br" | "us" | null(auto). */
   function parseAmount(str, numberFormat) {
     if (typeof str === 'number') return isFinite(str) ? Math.round(str * 100) : null;
@@ -184,7 +188,7 @@
     let s = String(str).replace(/[  ]/g, ' ').replace(/−/g, '-').trim().toUpperCase();
     if (!s) return null;
     let neg = false;
-    s = s.replace(/R\$|US\$|BRL|\$/g, ' ').trim();
+    s = s.replace(CUR_STRIP_RE, ' ').trim();
     for (let iter = 0; iter < 5; iter++) {
       const before = s;
       if (/^\(.*\)$/.test(s)) { neg = !neg; s = s.slice(1, -1).trim(); }
@@ -196,7 +200,7 @@
       if (m) { neg = true; s = m[1].trim(); }
       m = s.match(/^(.*\d)\s*(C|CR|CRED)$/);
       if (m) { s = m[1].trim(); }
-      s = s.replace(/R\$|\$/g, '').trim();
+      s = s.replace(CUR_STRIP_RE, '').trim();
       if (s === before) break;
     }
     s = s.replace(/\s+/g, '').replace(/'/g, '');
@@ -244,7 +248,7 @@
     let br = 0, us = 0, strong = 0;
     for (const raw of strings || []) {
       if (raw == null) continue;
-      let s = String(raw).toUpperCase().replace(/R\$|US\$|\$|BRL/g, '').replace(/[\s()+\-]/g, '').replace(/(D|C|DB|CR)$/, '');
+      let s = String(raw).toUpperCase().replace(CUR_STRIP_RE, '').replace(/[\s()+\-]/g, '').replace(/(D|C|DB|CR)$/, '');
       if (!/^[0-9.,]+$/.test(s)) continue;
       const li = Math.max(s.lastIndexOf('.'), s.lastIndexOf(','));
       if (li < 0) continue;
@@ -534,9 +538,10 @@
     s = s.replace(/^(.*[A-Z]{3,}.*?)\s+\d{1,3}$/, '$1');
     s = s.replace(/^\d{5,}\s+/, '')
       .replace(/\*/g, ' ')
+      .replace(/\s*[•·]\s*/g, ' - ')
       .replace(/\s+-\s+/g, ' ')
       .replace(/\s+/g, ' ')
-      .replace(/^[\s\-.:/|]+|[\s\-.:/|]+$/g, '')
+      .replace(/^[\s\-.:/|•·]+|[\s\-.:/|•·]+$/g, '')
       .trim();
     // collapse repeated words ("IFOOD IFOOD")
     const words = s.split(' ');
@@ -728,6 +733,7 @@
     '/\\b13O? ?SALARIO|DECIMO TERCEIRO/|renda.13|income', '/\\bFERIAS\\b/|renda.ferias|income', '/\\bPLR\\b|PARTICIPACAO NOS LUCROS|\\bBONUS\\b/|renda.plr|income',
     '/RENDIMENTOS?\\b|REND PAGO|JUROS SOBRE CAPITAL|DIVIDENDO/|renda.rendimentos|income', 'REEMBOLSO|renda.reembolsos|income', 'CASHBACK|renda.reembolsos|income',
     '/\\b(ALELO|SODEXO|PLUXEE|VR BENEFICIOS|TICKET SERVICOS|FLASH BENEFICIOS|CAJU BENEFICIOS)\\b/|renda.beneficios|income',
+    '/\\b(?:DISPONIBILIZACAO|CREDITO|RECARGA|DEPOSITO|LIBERACAO)\\s+(?:DE\\s+|DO\\s+)?BENEFICIOS?\\b/|renda.beneficios|income',
     'PIX RECEBIDO|renda.outros|income', 'TED RECEBIDA|renda.outros|income', 'DOC RECEBIDO|renda.outros|income', 'TRANSFERENCIA RECEBIDA|renda.outros|income',
     // card payments / transfers (no category)
     'PAGAMENTO FATURA||card_payment', 'PAGAMENTO DE FATURA||card_payment', 'PAG FATURA||card_payment', 'PGTO FATURA||card_payment', 'PAGTO FATURA||card_payment', 'FATURA CARTAO||card_payment',
@@ -836,9 +842,9 @@
   // ---------------------------------------------------------------------------
   // Kind detection & classification
   // ---------------------------------------------------------------------------
-  const CARD_PAYMENT_RE = /\b(?:PAGAMENTO|PAGTO|PGTO|PAG)\.?\s+(?:DE\s+|DA\s+)?FATURA\b|\bFATURA\s+(?:DO\s+|DE\s+)?CART(?:AO)?\b|\bPAGAMENTO\s+(?:DE\s+|DO\s+)?CARTAO(?:\s+DE\s+CREDITO)?\b|\bPAG(?:TO)?\s+CARTAO\s+CRED|\bDEB(?:ITO)?\s+(?:AUT(?:OMATICO)?\.?\s+)?FATURA\b/;
+  const CARD_PAYMENT_RE = /\b(?:PAGAMENTO|PAGTO|PGTO|PAG)\.?\s+(?:DE\s+|DA\s+)?FATURA\b|\bFATURA\s+(?:DO\s+|DE\s+)?CART(?:AO)?\b|\bPAGAMENTO\s+(?:DE\s+|DO\s+)?CARTAO(?:\s+DE\s+CREDITO)?\b|\bPAG(?:TO)?\s+CARTAO\s+CRED|\bDEB(?:ITO)?\s+(?:AUT(?:OMATICO)?\.?\s+)?FATURA\b|\bPARA\s+PAGAR\s+(?:A\s+|SUA\s+)?FATURA\b/;
   const CARD_SIDE_PAYMENT_RE = /\bPAGAMENTO\s+(?:RECEBIDO|EFETUADO|REALIZADO)\b|^PAGAMENTO\b|\bPAGTO\s+(?:RECEBIDO|EFETUADO)|\bPAGAMENTO\s+(?:EM\s+)?(?:DEBITO|CONTA)\b|\bPAGAMENTO\s+ON\s*-?\s*LINE\b|\bPGTO\s+(?:RECEBIDO|EFETUADO)|\bPAYMENT\b/;
-  const TRANSFER_RE = /\bTRANSF(?:ERENCIA)?\.?\s+(?:ENTRE\s+CONTAS|PROPRIA|P\/\s*PROPRIA|MESMA\s+TITULARIDADE|MESMO\s+TITULAR)|\bENTRE\s+CONTAS\b|\bMESMA\s+TITULARIDADE\b|\bMESMO\s+TITULAR\b/;
+  const TRANSFER_RE = /\bTRANSF(?:ERENCIA)?\.?\s+(?:ENTRE\s+CONTAS|PROPRIA|P\/\s*PROPRIA|MESMA\s+TITULARIDADE|MESMO\s+TITULAR)|\bENTRE\s+CONTAS\b|\bMESMA\s+TITULARIDADE\b|\bMESMO\s+TITULAR\b|\bENTRE\s+CARTEIRAS\b|\bTRANSF(?:ERENCIA)?\.?\s+(?:DE\s+|PARA\s+(?:A\s+)?)?CARTEIRA\b/;
   const REND_RE = /\bRENDIMENTOS?\b|\bREND\.?\s+PAGO|\bJUROS\s+SOBRE\s+CAPITAL|\bDIVIDENDOS?\b/;
   const INVEST_RE = /\b(?:APLICACAO|APLIC|RESGATE|RESG|CDB|LCI|LCA|RDB|TESOURO|POUPANCA|COMPRA\s+DE\s+TITULO|CORRETORA)\b|\bINVESTIMENTOS?\b/;
   const REFUND_ANY_RE = /\bESTORNO|\bDEVOLUCAO|\bCREDITO\s+DE\s+COMPRA|\bCHARGEBACK|\bCANCELAMENTO\s+DE\s+COMPRA/;
@@ -867,6 +873,8 @@
     if (a > 0 && REND_RE.test(t)) return { kind: 'income', explicit: true };
     if (INVEST_RE.test(t) && accountType !== 'credit_card') return { kind: 'investment', explicit: true };
     if (a > 0 && accountType === 'credit_card') return { kind: 'expense', explicit: true, refund: true };
+    // v2.4b: benefit cards (VA/VR) — money in is the benefit itself (wallet moves were caught above as transfers)
+    if (a > 0 && accountType === 'benefit') return { kind: 'income', explicit: true, benefit: true };
     if (a > 0 && INCOME_RE.test(t)) return { kind: 'income', explicit: true };
     if (accountType === 'payslip') return { kind: a > 0 ? 'income' : 'expense', explicit: true };
     return { kind: a > 0 ? 'income' : 'expense', explicit: false };
@@ -944,6 +952,13 @@
         if (e.kind === 'card_payment' || e.kind === 'transfer') kind = ruleKind || e.kind;
       }
     }
+    // v2.4b: a benefit card's credit is the benefit; a purchase in a wallet ("Refeição", "Alimentação") hints the category —
+    // below rules, learned rules and the dictionary
+    if (!categoryId && !ruleKind && kind === 'income' && dk.benefit && catIdx['renda.beneficios']) { categoryId = 'renda.beneficios'; catSource = 'dictionary'; }
+    if (!categoryId && !catSource && kind === 'expense' && (tx.amount || 0) < 0) {
+      const h = walletCategory(tx.tags);
+      if (h && catIdx[h]) { categoryId = h; catSource = 'wallet'; }
+    }
     // positive amount on an expense category with only sign-based kind => refund, i.e. a negative expense
     if (!ruleKind && categoryId && kind === 'income' && !dk.explicit) {
       const ci = catIdx[categoryId];
@@ -972,6 +987,14 @@
     return { kind, categoryId, catSource, merchant };
   }
 
+  // v2.4b: benefit-card wallets (tags) → category hint
+  const WALLET_HINTS = [[/^REFEICAO|^VALE REFEICAO|^VR$/, 'alimentacao.restaurante'], [/^ALIMENTACAO|^VALE ALIMENTACAO|^VA$/, 'alimentacao.mercado'],
+    [/^MOBILIDADE|^TRANSPORTE/, 'transporte.publico'], [/^COMBUSTIVEL/, 'transporte.combustivel'], [/^SAUDE/, 'saude.farmacia'],
+    [/^CULTURA/, 'lazer.eventos'], [/^EDUCACAO/, 'educacao.cursos']];
+  function walletCategory(tags) {
+    for (const t of isArr(tags) ? tags : []) { const n = norm(t); for (const [re, id] of WALLET_HINTS) if (re.test(n)) return id; }
+    return null;
+  }
   /** The kind a category implies, from its group: income | investment | expense. null when unknown. */
   function kindForCategory(categoryId, categoriesOrIndex) {
     if (!categoryId) return null;
@@ -1088,7 +1111,11 @@
   const HDR = {
     dc: /^(D\/C|C\/D|DC|CD|D\/ ?C|TIPO|NATUREZA|SINAL|DEB\/CRED|CRED\/DEB|TYPE|DEBITO\/CREDITO|CREDITO\/DEBITO|D-C|C-D)$/,
     balance: /\bSALDO\b|\bBALANCE\b/,
-    ignore: /\bDOC\b|DOCTO|DOCUMENTO|^N[O°º]?\.?$|^NUMERO|^ID$|IDENTIFICADOR|AGENCIA|^AG\b|ORIGEM|^CONTA\b|\bCPF\b|CNPJ|CATEGORIA|CATEGORY|CARTAO|\bCARD\b|PORTADOR|COTACAO|US\$|\bUSD\b|DOLAR|MOEDA ORIGINAL|\bCODIGO\b|^COD\b/,
+    ignore: /\bDOC\b|DOCTO|DOCUMENTO|^N[O°º]?\.?$|^NUMERO|^ID$|IDENTIFICADOR|AGENCIA|^AG\b|ORIGEM|^CONTA\b|\bCPF\b|CNPJ|CATEGORIA|CATEGORY|CARTAO|\bCARD\b|PORTADOR|\bCODIGO\b|^COD\b/,
+    // v2.4b: foreign currency columns (were ignored before)
+    fxRate: /COTACAO|TAXA DE CAMBIO|\bCAMBIO\b|CONVERSAO|EXCHANGE RATE|^RATE$|DOLAR DO DIA/,
+    fxCurrency: /^(MOEDA|CURRENCY|CUR|MOEDA ORIGINAL)$/,
+    fxAmount: /US\$|U\$|\bUSD\b|DOLAR|\bEUR\b|EURO|€|£|\bGBP\b|MOEDA ORIGINAL|VALOR ORIGINAL|MOEDA ESTRANGEIRA|EM MOEDA|ORIGINAL AMOUNT|FOREIGN/,
     debit: /DEBITO|\bDEBIT\b|SAIDAS?\b|RETIRADAS?|WITHDRAW|\bOUT\b|DESPESA/,
     credit: /CREDITO|\bCREDIT\b|ENTRADAS?\b|DEPOSITOS?|DEPOSIT\b|\bIN\b|RECEITA/,
     amount: /VALOR|AMOUNT|VALUE|MONTANTE|QUANTIA|\bVLR\b|R\$|PRICE|IMPORTE|\bTOTAL\b/,
@@ -1104,6 +1131,9 @@
     if (HDR.time.test(n) && !HDR.date.test(n)) return 'time';
     if (HDR.date.test(n)) return 'date';
     if (HDR.balance.test(n)) return 'balance';
+    if (HDR.fxRate.test(n)) return 'fxRate';
+    if (HDR.fxCurrency.test(n)) return 'fxCurrency';
+    if (HDR.fxAmount.test(n) && !/R\$|\bBRL\b|\bREAIS\b/.test(n)) return 'fxAmount';
     if (HDR.ignore.test(n)) return 'ignore';
     if (HDR.installment.test(n)) return 'installment';
     if (HDR.debit.test(n) && !HDR.credit.test(n)) return 'debit';
@@ -1228,6 +1258,15 @@
       if (roles[s.j] !== 'ignore') return;
       if (s.ne.length && s.flagF >= 0.9 && s.fill >= 0.8) { roles[s.j] = 'dcFlag'; conf[s.j] = s.hint === 'dcFlag' ? 0.95 : 0.85; }
     });
+    // v2.4b: foreign currency columns — by header, or numeric cells carrying a foreign marker (US$, USD, €, EUR...)
+    const dollar = rows.slice(0, 80).some(r => /D[OÓ]LAR/i.test(r.join(' ')));
+    stats.forEach(s => {
+      if (roles[s.j] !== 'ignore' || !s.ne.length) return;
+      const fxF = s.ne.filter(v => { const cu = currencyOf(v, { dollar }); return cu && cu !== 'BRL' && /\d/.test(v); }).length / s.ne.length;
+      if (s.hint === 'fxRate' && s.numF >= 0.5) { roles[s.j] = 'fxRate'; conf[s.j] = 0.9; }
+      else if (s.hint === 'fxCurrency' && s.ne.every(v => /^[A-Z]{3}$/i.test(v.trim()) || currencyOf(v, { dollar }))) { roles[s.j] = 'fxCurrency'; conf[s.j] = 0.9; }
+      else if ((s.hint === 'fxAmount' && s.numF >= 0.5) || (fxF >= 0.6 && s.numF >= 0.6)) { roles[s.j] = 'fxAmount'; conf[s.j] = s.hint === 'fxAmount' ? 0.9 : 0.75; }
+    });
     // date
     let dateCol = null, dateScore = -1;
     stats.forEach(s => {
@@ -1257,7 +1296,7 @@
       if (s.hint === 'ignore') { roles[s.j] = 'ignore'; conf[s.j] = 0.8; }
       else if (s.hint === 'balance') { roles[s.j] = 'balance'; conf[s.j] = 0.95; }
     }
-    let free = numeric.filter(s => roles[s.j] === 'ignore' && s.hint !== 'ignore');
+    let free = numeric.filter(s => roles[s.j] === 'ignore' && s.hint !== 'ignore' && !/^fx/.test(s.hint || ''));
     let hdrDebit = free.find(s => s.hint === 'debit'), hdrCredit = free.find(s => s.hint === 'credit');
     let amountCol = null, debitCol = null, creditCol = null, splitByHeader = false;
     if (hdrDebit && hdrCredit) { debitCol = hdrDebit.j; creditCol = hdrCredit.j; splitByHeader = true; }
@@ -1316,6 +1355,25 @@
         const amts = sample.map(r => parseAmount(r[amountCol] || '', null));
         const bals = sample.map(r => parseAmount(r[s.j] || '', null));
         if (runningBalanceScore(amts, bals) >= 0.6) { roles[s.j] = 'balance'; conf[s.j] = 0.8; }
+      }
+    }
+    // a file with ONLY foreign amounts (e.g. a USD/EUR account): the foreign column is the amount, in that currency
+    let currency = 'BRL';
+    if (amountCol == null && debitCol == null) {
+      const fxc = roles.indexOf('fxAmount');
+      if (fxc >= 0) { roles[fxc] = 'amount'; amountCol = fxc; conf[fxc] = 0.8; const cu = stats[fxc].ne.map(v => currencyOf(v, { dollar })).find(x => x && x !== 'BRL'); currency = cu || currencyOf(stats[fxc].header, { dollar }) || 'USD'; }
+    }
+    if (amountCol != null && currency === 'BRL') {
+      const s0 = stats[amountCol];
+      const curs = s0.ne.map(v => currencyOf(v, { dollar }));
+      const fc = curs.filter(x => x && x !== 'BRL');
+      if (fc.length >= s0.ne.length * 0.6 && new Set(fc).size === 1 && !curs.includes('BRL')) currency = fc[0];
+      const hc = currencyOf(s0.header, { dollar });
+      if (hc && hc !== 'BRL' && !roles.includes('fxAmount')) currency = hc;
+      const cc = roles.indexOf('fxCurrency');
+      if (cc >= 0 && !roles.includes('fxAmount')) {
+        const codes = new Set(stats[cc].ne.map(v => (currencyOf(v, { dollar }) || v.trim().toUpperCase())));
+        if (codes.size === 1 && !codes.has('BRL')) currency = [...codes][0];
       }
     }
     if (amountCol == null && debitCol == null) warnings.push('Coluna de valor não identificada.');
@@ -1416,7 +1474,7 @@
       headerRowIndex, dataStart, dataEnd, skippedRows, columns,
       numberFormat: nf.format, numberFormatConfidence: nf.confidence,
       dateFormat: df.format, dateFormatConfidence: df.confidence,
-      signConvention, signConfidence, fingerprint, overallConfidence: round2(clamp01(overall)), width: W
+      signConvention, signConfidence, fingerprint, overallConfidence: round2(clamp01(overall)), width: W, currency
     });
   }
 
@@ -1449,7 +1507,7 @@
       if (c.role && c.role !== 'ignore' && cols[c.role] == null) cols[c.role] = c.index;
     }
     const columns = {};
-    for (const k of ['date', 'time', 'description', 'amount', 'debit', 'credit', 'dcFlag', 'installment', 'balance']) if (cols[k] != null) columns[k] = cols[k];
+    for (const k of ['date', 'time', 'description', 'amount', 'debit', 'credit', 'dcFlag', 'installment', 'balance', 'fxAmount', 'fxCurrency', 'fxRate', 'tag', 'section', 'detail']) if (cols[k] != null) columns[k] = cols[k];
     const hdr = a.headerRowIndex != null && a.rows ? a.rows[a.headerRowIndex].filter(Boolean).slice(0, 4).join(', ') : (a.columns || []).length + ' colunas';
     const p = {
       id: 'prof_' + hashStr(a.fingerprint || JSON.stringify(columns)),
@@ -1465,6 +1523,9 @@
       numberFormat: a.numberFormat || 'br',
       signConvention: a.signConvention || 'negative_is_expense'
     };
+    // v2.4b: PDF layouts and foreign-currency files
+    if (a.source === 'pdf') { p.kind = 'pdf'; p.name = 'Layout PDF: ' + ({ fatura: 'fatura', extrato: 'extrato', beneficio: 'benefício' }[a.pdf && a.pdf.kind] || 'extrato'); }
+    if (a.currency && a.currency !== 'BRL') p.currency = a.currency;
     const o = overrides || {};
     const out = Object.assign({}, p, o);
     if (o.columns) {
@@ -1521,6 +1582,7 @@
     const skipRes = compileSkip(profile.skipBottomPatterns || SKIP_PATTERNS);
     const errors = [];
     const pending = [];
+    const fxNames = { dollar: rows.slice(0, 60).some(r => /D[OÓ]LAR/i.test(r.join(' '))) };
     for (let i = start; i < rows.length; i++) {
       const r = rows[i];
       const nonEmpty = r.filter(Boolean).length;
@@ -1529,14 +1591,18 @@
       const raw = r.filter(Boolean).join(' | ');
       const dp = parseDateParts(r[c.date] || '', profile.dateFormat);
       if (!dp) { if (nonEmpty >= 2) errors.push({ rowIndex: i, raw, reason: 'data inválida' }); continue; }
-      const am = amountFromRow(r, profile);
+      const am = fxFromRow(r, profile, amountFromRow(r, profile), fxNames);
       if (am.error) { errors.push({ rowIndex: i, raw, reason: am.error }); continue; }
       if (am.amount === 0) { errors.push({ rowIndex: i, raw, reason: 'valor zero' }); continue; }
       const desc = (c.description != null ? r[c.description] : '') || '';
       const time = (c.time != null ? parseTime(r[c.time]) : null) || timeFromDateCell(r[c.date]);
       // running balance ("Saldo") column: kept per row so data-health can find missing rows
       const balance = c.balance != null && r[c.balance] ? parseAmount(r[c.balance], profile.numberFormat || 'br') : null;
-      pending.push({ i, dp, amount: am.amount, desc: desc || '(sem descrição)', instCell: c.installment != null ? r[c.installment] : '', time, balance });
+      const extra = {};
+      if (c.tag != null && r[c.tag]) extra.tags = [String(r[c.tag]).trim()];
+      if (c.section != null && r[c.section]) extra.section = String(r[c.section]).trim().slice(0, 80);
+      if (c.detail != null && r[c.detail]) extra.detail = String(r[c.detail]).trim().slice(0, 160);
+      pending.push({ i, dp, amount: am.amount, foreignOnly: am.foreignOnly, desc: desc || '(sem descrição)', instCell: c.installment != null ? r[c.installment] : '', time, balance, fx: am.fx || null, extra });
     }
     // resolve year-less dates
     const withYear = pending.filter(p => p.dp.hasYear);
@@ -1557,6 +1623,7 @@
     }
     const occ = {};
     const transactions = [];
+    const needRates = [];
     let total = 0;
     const accountId = opts.accountId || profile.defaultAccountId || 'conta';
     const importId = opts.importId || 'imp_' + hashStr(String(Date.now()));
@@ -1579,10 +1646,57 @@
       if (installment && date !== purchaseDate) tx.originalDate = purchaseDate;
       if (p.time) tx.time = p.time;
       if (p.balance != null) tx.balance = p.balance;
-      total += p.amount;
+      Object.assign(tx, p.extra);
+      if (p.foreignOnly) {
+        // a foreign-only row (account in USD/EUR...): booked in BRL with the month's rate (file column or settings.fxRates)
+        const ym = monthOf(date);
+        const r = p.fx.rate ? { rate: p.fx.rate, file: true } : fxRateFor(opts.fxRates, p.fx.currency, ym, true);
+        if (!r) {
+          const key = p.fx.currency + '|' + ym;
+          if (!needRates.some(n => n.key === key)) needRates.push({ key, currency: p.fx.currency, ym });
+          errors.push({ rowIndex: p.i, raw: p.desc, reason: 'sem cotação de ' + p.fx.currency + ' para ' + ym.slice(5, 7) + '/' + ym.slice(0, 4), needRate: key });
+          continue;
+        }
+        tx.amount = Math.round(p.fx.amount * r.rate);
+        tx.kind = tx.amount < 0 ? 'expense' : 'income';
+        tx.fx = { currency: p.fx.currency, amount: p.fx.amount, rate: r.rate, source: r.file ? 'file' : 'manual' };
+      } else if (p.fx) tx.fx = p.fx;
+      total += tx.amount;
       transactions.push(tx);
     }
-    return { transactions, errors, total };
+    linkFxIof(transactions);
+    return { transactions, errors, total, needRates };
+  }
+  /** v2.4b: foreign-currency columns of a row. A row with a foreign amount AND a BRL amount books the BRL one and keeps
+   *  fx = { currency, amount, rate? }; a row in a foreign currency only (profile.currency, or a Moeda column naming a
+   *  non-BRL code) books nothing yet: applyProfile converts it with the month's rate. The foreign column is NEVER the
+   *  BRL amount. */
+  function fxFromRow(r, profile, am, names) {
+    const c = profile.columns || {}, nf = profile.numberFormat || 'br';
+    const rowCur = c.fxCurrency != null ? currencyOf(r[c.fxCurrency], names) || (/^[A-Z]{3}$/.test(cellStr(r[c.fxCurrency]).toUpperCase()) ? cellStr(r[c.fxCurrency]).toUpperCase() : null) : null;
+    const fxCell = c.fxAmount != null ? cellStr(r[c.fxAmount]) : '';
+    const rate = c.fxRate != null ? parseRate(r[c.fxRate]) : null;
+    if (fxCell) {
+      const fa = parseAmount(fxCell, null);
+      if (fa != null && fa !== 0) {
+        const cur = rowCur && rowCur !== 'BRL' ? rowCur : currencyOf(fxCell, names) || profile.fxCurrency || (profile.currency && profile.currency !== 'BRL' ? profile.currency : 'USD');
+        if (am.error && (am.error === 'sem valor')) {
+          // only the foreign value on this row: convert it like a foreign-only row
+          const sgn = profile.signConvention === 'positive_is_expense' ? -1 : 1;
+          return { amount: sgn * fa, foreignOnly: true, fx: { currency: cur, amount: sgn * fa, rate } };
+        }
+        if (am.error) return am;
+        const famt = Math.sign(am.amount || 1) * Math.abs(fa);
+        const fx = { currency: cur, amount: famt };
+        const rr = rate || (am.amount ? Math.round(Math.abs(am.amount) / Math.abs(fa) * 10000) / 10000 : null);
+        if (rr) fx.rate = rr;
+        return Object.assign({}, am, { fx });
+      }
+    }
+    if (am.error) return am;
+    const cur = rowCur || (profile.currency && profile.currency !== 'BRL' ? profile.currency : null);
+    if (cur && cur !== 'BRL') return { amount: am.amount, foreignOnly: true, fx: { currency: cur, amount: am.amount, rate } };
+    return am;
   }
 
   // ---------------------------------------------------------------------------
@@ -2132,6 +2246,8 @@
       } else u = applyCategoryKind(u, ctx.categories);
       return u;
     });
+    // v2.4b: the IOF ↔ foreign purchase links of the moved rows (cleared above) come back
+    linkFxIof(moved.filter(t => t && !t.deleted && t.importId === importId));
     const live = moved.filter(t => t && !t.deleted);
     const linked = linkCardPayments(live, ctx.accounts);
     const byId = new Map(linked.map(t => [t.id, t]));
@@ -3504,8 +3620,12 @@
       const ds = (plain.length ? plain : list).map(t => t.date).sort();
       const all = list.map(t => t.date).sort();
       const fp = filePeriod(rec.fileName);
-      out.push({ id, rec, list, accountId, kind: importKind(list, rec), name: rec.fileName || id, min: ds[0], max: ds[ds.length - 1], dates: ds, at: rec.at || null,
-        from: all[0], to: all[all.length - 1], coverTo: fp && fp[1] > all[all.length - 1] ? fp[1] : all[all.length - 1], fileDates: fileDates(rec.fileName) });
+      // v2.4b: a PDF fatura brings its own due date / cycle (import record) — better than any guess
+      const fds = (isoRe.test(rec.dueDate || '') ? [rec.dueDate] : []).concat(fileDates(rec.fileName));
+      const kind = rec.docKind === 'fatura' ? 'fatura' : rec.docKind === 'extrato' || rec.docKind === 'beneficio' ? 'extrato' : importKind(list, rec);
+      out.push({ id, rec, list, accountId, kind, name: rec.fileName || id, min: ds[0], max: ds[ds.length - 1], dates: ds, at: rec.at || null,
+        from: all[0], to: all[all.length - 1], coverTo: fp && fp[1] > all[all.length - 1] ? fp[1] : (isoRe.test(rec.cycleEnd || '') && rec.cycleEnd > all[all.length - 1] ? rec.cycleEnd : all[all.length - 1]), fileDates: fds,
+        closeDate: isoRe.test(rec.closeDate || '') ? rec.closeDate : null });
     }
     return out;
   }
@@ -3558,13 +3678,15 @@
     const groups = importGroups(input.transactions, input.imports).filter(g => g.accountId === accId && g.kind !== 'extrato' && g.list.length >= 2);
     const basis = [];
     // due day: file names
-    const dueFromNames = groups.map(g => g.fileDates.length === 1 ? g.fileDates[0] : null).filter(Boolean);
+    const dueFromNames = groups.map(g => isoRe.test(g.rec.dueDate || '') ? g.rec.dueDate : g.fileDates.length === 1 ? g.fileDates[0] : null).filter(Boolean);
     let dueDay = null;
     const mn = mode(dueFromNames.map(d => +d.slice(8, 10)));
-    if (mn && (mn[1] >= 2 || dueFromNames.length === 1)) { dueDay = mn[0]; basis.push('Vencimento dia ' + dueDay + ': a data no nome de ' + mn[1] + ' fatura' + (mn[1] > 1 ? 's' : '') + ' importada' + (mn[1] > 1 ? 's' : '') + '.'); }
+    if (mn && (mn[1] >= 2 || dueFromNames.length === 1)) { dueDay = mn[0]; basis.push('Vencimento dia ' + dueDay + ': ' + (groups.some(g => isoRe.test(g.rec.dueDate || '')) ? 'o vencimento impresso (PDF) ou a data no nome' : 'a data no nome') + ' de ' + mn[1] + ' fatura' + (mn[1] > 1 ? 's' : '') + ' importada' + (mn[1] > 1 ? 's' : '') + '.'); }
     // closing day: first purchase (= previous closing) and the day after the last purchase of each fatura
     const cands = [];
     for (const g of groups) {
+      // v2.4b: the closing printed on a PDF fatura (day after its last purchase day) counts three times
+      if (g.closeDate) { const d = +g.closeDate.slice(8, 10); cands.push(d, d, d); continue; }
       if (g.min) cands.push(+g.min.slice(8, 10));
       if (g.max) cands.push(+addDays(g.max, 1).slice(8, 10));
     }
@@ -3695,6 +3817,726 @@
   }
 
   // ---------------------------------------------------------------------------
+  // v2.4b — foreign currencies
+  // ---------------------------------------------------------------------------
+  const CUR_SYMBOL = { BRL: 'R$', USD: 'US$', EUR: '€', GBP: '£', JPY: '¥', CNY: '¥' };
+  const CUR_NAME_RE = [[/\bDOLAR(?:ES)?\b|\bDOLLARS?\b/, 'USD'], [/\bEUROS?\b/, 'EUR'], [/\bLIBRAS?\b|\bPOUNDS?\b/, 'GBP'], [/\bPESOS? ARGENTINOS?\b/, 'ARS'], [/\bIENES?\b/, 'JPY']];
+  /** the currency a cell/line names: "US$ 12,99" → USD, "€ 5,00"/"EUR" → EUR, "R$" → BRL; a bare "$" is USD only with
+   *  opts.dollar (the file mentions "dólar"). -> ISO code | null */
+  function currencyOf(str, opts) {
+    const s = String(str == null ? '' : str).toUpperCase();
+    if (!s) return null;
+    if (/US\$|U\$/.test(s)) return 'USD';
+    if (/R\$/.test(s)) return 'BRL';
+    if (/€/.test(s)) return 'EUR';
+    if (/£/.test(s)) return 'GBP';
+    if (/¥/.test(s)) return 'JPY';
+    const m = s.match(new RegExp('(?:^|[^A-Z])(' + ISO_CODES.join('|') + ')(?![A-Z])'));
+    if (m) return m[1];
+    if (/\$/.test(s) && opts && opts.dollar) return 'USD';
+    return null;
+  }
+  /** "5,2034" / "5.2034" / "R$ 5,20" -> 5.2034 (a conversion rate, up to 6 decimals) | null */
+  function parseRate(str) {
+    if (typeof str === 'number') return isFinite(str) && str > 0 ? str : null;
+    const m = String(str == null ? '' : str).replace(/\s/g, '').match(/(\d{1,3}(?:[.,]\d{3})*|\d+)[.,](\d{1,6})(?!\d)/) || String(str || '').match(/(\d+)()/);
+    if (!m) return null;
+    const v = Number(m[1].replace(/[.,]/g, '') + (m[2] ? '.' + m[2] : ''));
+    return isFinite(v) && v > 0 ? v : null;
+  }
+  /** "US$ 12,99" style label for an fx record { currency, amount (cents) } */
+  function formatFx(fx) {
+    if (!fx || !fx.currency) return '';
+    const c = Math.abs(Math.round(Number(fx.amount) || 0));
+    const num = String(Math.floor(c / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + pad2(c % 100);
+    return (CUR_SYMBOL[fx.currency] || fx.currency) + ' ' + num;
+  }
+  /** the rate stored by the user for a currency + month: settings.fxRates { USD: { 'YYYY-MM': 5.2 } } (nearest earlier month
+   *  when that month has none — never a later one — unless exact). -> { rate, ym } | null */
+  function fxRateFor(fxRates, currency, ym, exact) {
+    const t = fxRates && fxRates[currency];
+    if (!t || typeof t !== 'object') return null;
+    if (parseRate(t[ym])) return { rate: parseRate(t[ym]), ym };
+    if (exact) return null;
+    const prev = Object.keys(t).filter(k => /^\d{4}-\d{2}$/.test(k) && k < ym && parseRate(t[k])).sort().pop();
+    return prev ? { rate: parseRate(t[prev]), ym: prev } : null;
+  }
+  /** Recomputes the booked BRL amount of foreign-only rows (fx.source "manual": the rate came from settings.fxRates)
+   *  after the user changed a rate. -> rows that changed (new objects; updatedAt untouched — the caller stamps it) */
+  function applyFxRates(transactions, fxRates) {
+    const out = [];
+    for (const t of transactions || []) {
+      if (!t || t.deleted || !t.fx || t.fx.source !== 'manual' || !t.fx.currency) continue;
+      const r = fxRateFor(fxRates, t.fx.currency, monthOf(t.date), true);
+      if (!r) continue;
+      const amount = Math.round(t.fx.amount * r.rate);
+      if (amount === t.amount && t.fx.rate === r.rate) continue;
+      out.push(Object.assign({}, t, { amount, fx: Object.assign({}, t.fx, { rate: r.rate }) }));
+    }
+    return out;
+  }
+  const IOF_RE = /\bIOF\b/;
+  const INTL_RE = /\bINTERNAC|\bEXTERIOR\b|\bESTRANGEIR|\bINTL\b|\bINTERNATIONAL\b/;
+  /** links each IOF row to the foreign purchase it belongs to (same date, or the next/previous row of the file).
+   *  Mutates and returns the list. */
+  function linkFxIof(txs) {
+    const fx = txs.filter(t => t && t.fx && t.fx.currency && t.fx.currency !== 'BRL');
+    if (!fx.length) return txs;
+    const used = new Set();
+    for (const t of txs) {
+      if (!t || t.fx || t.linkedTo || !IOF_RE.test(norm(t.rawDescription))) continue;
+      let best = null, bs = Infinity;
+      for (const p of fx) {
+        if (used.has(p.id) || p.accountId !== t.accountId) continue;
+        const dd = Math.abs(dayNum(p.originalDate || p.date) - dayNum(t.originalDate || t.date));
+        const dr = t.rowIndex != null && p.rowIndex != null ? Math.abs(t.rowIndex - p.rowIndex) : 99;
+        if (dd > 1 && dr > 1) continue;
+        const sc = dd * 10 + dr;
+        if (sc < bs) { bs = sc; best = p; }
+      }
+      if (best) { used.add(best.id); t.linkedTo = best.id; }
+    }
+    return txs;
+  }
+  /** "Compras internacionais" for a period: rows with a foreign amount (spending) and the IOF tied to them.
+   *  -> { count, total (cents spent, positive), iof (cents), byCurrency: { USD: { amount, brl, count } } } */
+  function fxSummary(transactions, opts) {
+    opts = opts || {};
+    const inR = rangeFilter(opts.from, opts.to);
+    const list = (transactions || []).filter(inR);
+    const byId = new Map(list.map(t => [t.id, t]));
+    let total = 0, iof = 0, count = 0;
+    const byCurrency = {};
+    for (const t of list) {
+      if (t.fx && t.fx.currency && t.fx.currency !== 'BRL' && t.kind === 'expense') {
+        total -= t.amount; count++;
+        const b = byCurrency[t.fx.currency] = byCurrency[t.fx.currency] || { amount: 0, brl: 0, count: 0 };
+        b.amount += -Math.sign(t.amount || -1) * Math.abs(t.fx.amount); b.brl -= t.amount; b.count++;
+      } else if (t.kind === 'expense' && IOF_RE.test(norm(t.rawDescription)) && ((t.linkedTo && byId.get(t.linkedTo) && byId.get(t.linkedTo).fx) || INTL_RE.test(norm(t.rawDescription)))) {
+        iof -= t.amount;
+      }
+    }
+    return { count, total, iof, byCurrency };
+  }
+
+  // ---------------------------------------------------------------------------
+  // v2.4b — PDF statements: text extraction (pdf.js, injected) + layout reconstruction (pure)
+  // ---------------------------------------------------------------------------
+  /** readPdf(pdfjsLib, bytes, { password, onPage(i, n) }) -> Promise<{ items: [{str,x,y,w,h,page}], pages, pageSizes }>
+   *  The pdf.js library is passed in (browser: window.pdfjsLib; node: pdfjs-dist legacy build), so the same code runs in
+   *  both. Errors carry e.code: pdf_password (needs one) | pdf_password_wrong | pdf_no_text (image only) | pdf_invalid.
+   *  The password is used for this call only and never kept. */
+  async function readPdf(lib, bytes, opts) {
+    opts = opts || {};
+    if (!lib || typeof lib.getDocument !== 'function') { const e = new Error('leitor de PDF indisponível'); e.code = 'pdf_unavailable'; throw e; }
+    const src = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    // pdf.js may transfer (detach) the buffer it gets: hand it a plain copy (never a node Buffer) so the caller can retry
+    const data = new Uint8Array(src.length); data.set(src);
+    const params = { data, isEvalSupported: false, disableFontFace: true, useSystemFonts: false, stopAtErrors: false, verbosity: 0, disableAutoFetch: true, disableStream: true };
+    if (opts.password) params.password = String(opts.password);
+    let doc;
+    const task = lib.getDocument(params);
+    try { doc = await task.promise; } catch (e0) {
+      const e = new Error(e0 && e0.message || 'PDF inválido');
+      const pw = e0 && (e0.name === 'PasswordException' || /password/i.test(e0.message || ''));
+      e.code = pw ? (e0.code === 2 || (opts.password && e0.code !== 1) ? 'pdf_password_wrong' : 'pdf_password') : 'pdf_invalid';
+      try { task.destroy(); } catch (x) { /* ignore */ }
+      throw e;
+    }
+    const items = [], pageSizes = [];
+    const n = doc.numPages;
+    try {
+      for (let p = 1; p <= n; p++) {
+        if (opts.onPage) { try { opts.onPage(p, n); } catch (x) { /* ignore */ } }
+        const page = await doc.getPage(p);
+        const vp = page.getViewport({ scale: 1 });
+        const tc = await page.getTextContent();
+        for (const it of tc.items || []) {
+          if (!it || typeof it.str !== 'string' || !it.str.trim()) continue;
+          const tr = it.transform || [1, 0, 0, 1, 0, 0];
+          const h = Math.abs(it.height || tr[3] || tr[0]) || 10;
+          const w = it.width > 0 ? it.width : it.str.length * h * 0.5;
+          items.push({ str: it.str, x: round2(tr[4]), y: round2(tr[5]), w: round2(w), h: round2(h), page: p });
+        }
+        pageSizes.push({ w: vp.width, h: vp.height, y0: (vp.viewBox && vp.viewBox[1]) || 0 });
+        if (page.cleanup) page.cleanup();
+      }
+    } finally { try { await doc.destroy(); } catch (x) { /* ignore */ } }
+    if (!n) { const e = new Error('PDF sem páginas'); e.code = 'pdf_invalid'; throw e; }
+    const chars = items.reduce((s, i) => s + i.str.replace(/\s/g, '').length, 0);
+    if (chars < 20) { const e = new Error('PDF sem texto (imagem)'); e.code = 'pdf_no_text'; e.pages = n; throw e; }
+    return { items, pages: n, pageSizes };
+  }
+
+  /** char-by-char fold (accents off, upper case) that keeps the string length, so regex positions map back */
+  function fold(s) { let o = ''; for (const ch of String(s)) { const f = stripAccents(ch).toUpperCase(); o += f.length === ch.length ? f : (ch.length === 1 ? (f.charAt(0) || ch) : ch); } return o; }
+
+  /** items -> lines (y-clustered per page, sorted by x; big gaps split a line into segments, small ones are spaces).
+   *  -> [{ page, y, h, x, x2, segs: [{ str, x, x2, h }], text, offs: [segment start offsets in text] }] */
+  function pdfLines(items) {
+    const pages = new Map();
+    for (const it of items || []) {
+      if (!it || !String(it.str || '').trim()) continue;
+      const p = it.page || 1;
+      if (!pages.has(p)) pages.set(p, []);
+      pages.get(p).push({ str: String(it.str).replace(/\s+/g, ' '), x: +it.x || 0, y: +it.y || 0, w: +it.w || String(it.str).length * (+it.h || 10) * 0.5, h: +it.h || 10, page: p });
+    }
+    const out = [];
+    for (const p of [...pages.keys()].sort((a, b) => a - b)) {
+      const list = pages.get(p).sort((a, b) => b.y - a.y || a.x - b.x);
+      const groups = [];
+      for (const it of list) {
+        const g = groups[groups.length - 1];
+        if (g && Math.abs(g.y - it.y) <= Math.max(1.5, Math.min(g.h, it.h) * 0.45)) { g.items.push(it); g.h = Math.max(g.h, it.h); }
+        else groups.push({ y: it.y, h: it.h, items: [it] });
+      }
+      for (const g of groups) {
+        const its = g.items.sort((a, b) => a.x - b.x);
+        const segs = [];
+        for (const it of its) {
+          const s = segs[segs.length - 1];
+          const gap = s ? it.x - s.x2 : Infinity;
+          const hh = Math.min(s ? s.h : it.h, it.h);
+          if (s && gap <= Math.max(0.6, hh * 0.12)) { s.str += it.str; s.x2 = Math.max(s.x2, it.x + it.w); }
+          else if (s && gap <= hh * 1.1) { s.str += (/\s$/.test(s.str) || /^\s/.test(it.str) ? '' : ' ') + it.str; s.x2 = Math.max(s.x2, it.x + it.w); }
+          else segs.push({ str: it.str, x: it.x, x2: it.x + it.w, h: it.h });
+        }
+        segs.forEach(s => { s.str = s.str.trim(); });
+        const kept = segs.filter(s => s.str);
+        if (!kept.length) continue;
+        let text = '';
+        const offs = [];
+        kept.forEach((s, i) => { if (i) text += '   '; offs.push(text.length); text += s.str; });
+        out.push({ page: p, y: g.y, h: g.h, x: kept[0].x, x2: kept[kept.length - 1].x2, segs: kept, text, offs });
+      }
+    }
+    return out;
+  }
+
+  const MON_ALT = 'JAN(?:EIRO)?|FEV(?:EREIRO)?|MAR(?:CO)?|ABR(?:IL)?|MAI(?:O)?|JUN(?:HO)?|JUL(?:HO)?|AGO(?:STO)?|SET(?:EMBRO)?|OUT(?:UBRO)?|NOV(?:EMBRO)?|DEZ(?:EMBRO)?|FEB|APR|MAY|AUG|SEP|OCT|DEC';
+  // a date at the start of a line: 03/10, 03/10/26, 03/10/2026, 03.10, 03-10-2026, 3 outubro 2026, 03 OUT, 03/out, 3 de outubro de 2026
+  const LEAD_DATE_RE = new RegExp('^\\s*(\\d{1,2}[\\/.\\-]\\d{1,2}(?:[\\/.\\-](?:\\d{4}|\\d{2}))?|\\d{1,2}\\s*(?:DE\\s+)?[\\/\\- ]?\\s*(?:' + MON_ALT + ')\\.?(?:\\s*(?:DE\\s+)?[\\/\\- ]?\\s*(?:\\d{4}|\\d{2}(?!\\d|[.,:]\\d)))?)(?![\\d/.,]?\\d)(?=\\s|$|[^A-Z0-9])');
+  const WEEKDAY_RE = /^(?:HOJE|ONTEM|(?:SEGUNDA|TERCA|QUARTA|QUINTA|SEXTA)(?:-FEIRA)?|SABADO|DOMINGO|SEG|TER|QUA|QUI|SEX|SAB|DOM)\b[\s,.\-–]*/;
+  const ISO_ALT = ISO_CODES.join('|');
+  // money tokens: sign, parentheses, a currency marker before or after, BR or US decimals (2 digits), D/C or a trailing "-"
+  const MONEY_RE = new RegExp('(?<![\\w/.,:$€£])([+\\-−–](?:\\s?))?(\\(\\s*)?(R\\$|US\\$|U\\$|€|£|¥|\\$|(?:' + ISO_ALT + ')(?=\\s?[\\d(+\\-−–]))?\\s?([+\\-−–]\\s?)?' +
+    '(\\d{1,3}(?:[.,]\\d{3})+[.,]\\d{2}|\\d+[.,]\\d{2})(?![\\d%]|[.,/]\\d)(\\s*\\))?(?:\\s?(R\\$|BRL|' + ISO_ALT + ')(?![A-Z]))?(\\s?[DC](?![A-Z0-9])|-(?=\\s|$))?', 'g');
+  const RATE_RE = /(COTACAO|CONVERSAO|CAMBIO|TAXA DE CAMBIO|DOLAR DE CONVERSAO|EXCHANGE RATE|\bRATE\b)(?:\s+(?:DO|DE|DA)\s+[A-Z$]+)*\s*:?\s*(?:R\$|BRL)?\s*(\d{1,3}(?:\.\d{3})*[.,]\d{2,6}|\d+[.,]\d{2,6})(?!\d)/g;
+  const TIME_IN_RE = /(?<![\d:])([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?(?![\d:])/;
+  const INST_IN_RE = /\bPARC(?:ELA)?S?\.?\s*(\d{1,2})\s*(?:\/|DE|OF)\s*(\d{1,3})\b/;
+  const INST_SEG_RE = /^(?:PARC(?:ELA)?\.?\s*)?(\d{1,2})\s*(?:\/|DE|OF)\s*(\d{1,3})$/;
+  const HEADER_WORD_RE = /^(?:DATA|DT|DIA|DESCRICAO|HISTORICO|LANCAMENTOS?|MOVIMENTACOES|MOVIMENTACAO|ESTABELECIMENTO|TRANSACAO|TRANSACOES|DETALHES?|VALOR(?:ES)?|VALOR EM R\$|VALOR \(R\$\)|R\$|US\$|SALDO|SALDO \(R\$\)|PARCELAS?|DOCUMENTO|DOC|N[OºO°]? DOC|CREDITO|DEBITO|CREDITOS|DEBITOS|ENTRADAS?|SAIDAS?|MOEDA|COTACAO|CATEGORIA|TIPO|HORA|ORIGEM|DESTINO|CIDADE|PAIS)\b/;
+  // non-transaction regions (by section title) and lines
+  const SKIP_SECTIONS = [
+    ['futuras', /LANCAMENTOS FUTUROS|PROXIMAS? FATURAS?|FATURAS? FUTURAS?|PARCELAS? (?:A VENCER|FUTURAS|RESTANTES)|COMPRAS PARCELADAS\b.*\b(?:PROXIM|FUTUR|A VENCER)|\bA VENCER\b|PREVISAO|AGENDAMENTOS?|PROGRAMADOS?/],
+    ['ofertas', /PARCELE|PARCELAMENTO DE FATURA|OPCOES DE (?:PARCELAMENTO|PAGAMENTO)|CONHECA AS OPCOES|SIMULACAO|OFERTAS?\b|EMPRESTIMO|CREDITO PESSOAL|ANTECIPE/],
+    ['resumo', /^RESUMO|RESUMO DA FATURA|RESUMO DO EXTRATO|INFORMACOES COMPLEMENTARES|DATAS IMPORTANTES|SEU CARTAO DE CREDITO|ENCARGOS|TAXAS DE JUROS|JUROS E ENCARGOS|CUSTO EFETIVO|TETO DE JUROS|COBRANCAS|DECLARACAO|PAGAMENTO EM ATRASO|PAGAMENTO MINIMO|COMO PAGAR|AVISOS?\b|MENSAGENS?\b/],
+    ['limites', /^LIMITES?\b|LIMITE DO CARTAO|LIMITE DISPONIVEL|SAQUES? COM/]
+  ];
+  const OFFER_LINE_RE = /\d\s*\+\s*\[?\s*\d+\s*\]?\s*X\b|\bATE\s+\d+\s*X\b|\bEM\s+\d+\s*X\b|^\s*\d+\s*X\s+(?:DE\s+)?R\$|^TOTAL\s*:|\bPARCELE\b/;
+  const TOTAL_LINE_RE = /^(?:SUB\s*)?TOTA(?:L|IS)\b|\bTOTAL\s+(?:A PAGAR|DA FATURA|DESTA FATURA|DO PERIODO|DO MES|GERAL|DE (?:COMPRAS|LANCAMENTOS|CREDITOS|DEBITOS))|^VALOR\s+(?:TOTAL|DA FATURA|MINIMO|A PAGAR)|^PAGAMENTO\s+MINIMO|^CONSUMOS?\s+DE\b|^COMPRAS\s+DO\s+PERIODO/;
+  const SALDO_LINE_RE = /^(?:\(?[=+\-]?\)?\s*)?SALDO\b|^S A L D O|^SDO\b|\bSALDO\s+(?:ANTERIOR|DO DIA|FINAL|INICIAL|TOTAL|DISPONIVEL|ATUAL|EM CONTA|BLOQUEADO)\b/;
+  const LIMIT_LINE_RE = /^LIMITE\b|\bLIMITE\s+(?:TOTAL|DISPONIVEL|UTILIZADO|DE CREDITO|DO CARTAO)|^SAQUE\s+(?:TOTAL|DISPONIVEL|UTILIZADO)|^TARIFA DE SAQUE/;
+  const INFO_LINE_RE = /\d+[.,]\d+\s*%|\bA\.?\s?M\.?\b|\bA\.?\s?A\.?\b|\bCET\b|^IOF\s+(?:INTERNACIONAL|\d)/;
+  const CREDIT_LINE_RE = /\bPAGAMENTOS?\b|\bPGTO\b|\bPAGTO\b|\bPAGAR\s+(?:A\s+|SUA\s+)?FATURA\b|\bESTORNOS?\b|\bCREDITO\b|\bDEVOLUC|\bREEMBOLSO|\bCASHBACK\b|\bABATIMENTO|\bCANCELAMENTO\b|\bAJUSTE\s+A\s+CREDITO|\bRECEBID[OA]\b|\bDEPOSITO\b|\bSALARIO\b|\bRENDIMENTO/;
+  const CHARGE_LINE_RE = /\bIOF\b|\bJUROS\b|\bMULTA\b|\bENCARGOS?\b|\bTARIFA\b|\bANUIDADE\b|\bSEGURO\b|\bPROTECAO\b|\bMORA\b/;
+  const IN_SECTION_RE = /PAGAMENTOS?\b|CREDITOS?\b|ESTORNOS?\b|ENTRADAS?\b|RECEBIMENTOS?\b|DEPOSITOS?\b|DEVOLUC/;
+  const OUT_SECTION_RE = /DEBITOS?\b|SAIDAS?\b|COMPRAS?\b|DESPESAS?\b|GASTOS?\b|LANCAMENTOS (?:NACIONAIS|INTERNACIONAIS)|DESPESAS NO EXTERIOR|TRANSACOES/;
+  const BENEFIT_DOC_RE = /\bBENEFICIOS?\b|\bVALE[\s-](?:REFEICAO|ALIMENTACAO)\b|\bMULTIBENEFICIOS\b|\bPLUXEE\b|\bSODEXO\b|\bALELO\b|\bTICKET\b|\bVR\s+BENEFICIOS\b|\bFLASH\b|\bCAJU\b|\bSWILE\b|\bVEROCARD\b|\bCARTEIRAS?\b/;
+  const WALLET_RE = /\b(VALE[\s-]REFEICAO|VALE[\s-]ALIMENTACAO|REFEICAO|ALIMENTACAO|MOBILIDADE|TRANSPORTE|COMBUSTIVEL|CULTURA|SAUDE|EDUCACAO|HOME OFFICE|PREMIACAO|MULTIBENEFICIOS|AUXILIO\s+\w+)\b/;
+  const WALLET_NAME = { 'VALE REFEICAO': 'Refeição', 'VALE-REFEICAO': 'Refeição', REFEICAO: 'Refeição', 'VALE ALIMENTACAO': 'Alimentação', 'VALE-ALIMENTACAO': 'Alimentação', ALIMENTACAO: 'Alimentação',
+    MOBILIDADE: 'Mobilidade', TRANSPORTE: 'Transporte', COMBUSTIVEL: 'Combustível', CULTURA: 'Cultura', SAUDE: 'Saúde', EDUCACAO: 'Educação', 'HOME OFFICE': 'Home office', PREMIACAO: 'Premiação', MULTIBENEFICIOS: 'Multibenefícios' };
+
+  /** money tokens of a line: [{ start, end, cents (abs), neg, plus, dc, currency, x2 (approx. right edge), raw }] */
+  function moneyTokens(line, ctx) {
+    const f = fold(line.text);
+    const rates = [];
+    RATE_RE.lastIndex = 0;
+    let m;
+    while ((m = RATE_RE.exec(f))) rates.push({ start: m.index, end: m.index + m[0].length, rate: parseRate(m[2]) });
+    const toks = [];
+    MONEY_RE.lastIndex = 0;
+    while ((m = MONEY_RE.exec(f))) {
+      const start = m.index, end = m.index + m[0].length;
+      if (rates.some(r => start < r.end && end > r.start)) continue;
+      const raw = line.text.slice(start, end).trim();
+      let cur = m[3] || m[7] || null;
+      cur = cur ? currencyOf(cur, ctx) : null;
+      if ((m[3] === '$' || m[7] === '$') && !cur) cur = null;
+      const num = m[5];
+      const cents = parseAmount(num, ctx && ctx.numberFormat || null);
+      if (cents == null) continue;
+      const neg = !!((m[1] && /[\-−–]/.test(m[1])) || (m[4] && /[\-−–]/.test(m[4])) || (m[2] && m[6]) || (m[8] && /D|-/.test(m[8])));
+      const plus = !neg && !!((m[1] && /\+/.test(m[1])) || (m[4] && /\+/.test(m[4])) || (m[8] && /C/.test(m[8])));
+      toks.push({ start, end, cents: Math.abs(cents), neg, plus, dc: !!(m[8] && /[DC]/.test(m[8])), currency: cur, raw, x2: posX(line, end), x1: posX(line, start) });
+    }
+    return { toks, rates };
+  }
+  /** approximate x of a char offset of line.text (segments are placed at their x; chars spread over the width) */
+  function posX(line, off) {
+    let i = line.offs.length - 1;
+    while (i > 0 && line.offs[i] > off) i--;
+    const s = line.segs[i], o = off - line.offs[i];
+    const len = Math.max(1, s.str.length);
+    return s.x + (s.x2 - s.x) * Math.max(0, Math.min(1, o / len));
+  }
+
+  function dateFromParts(p, ref) {
+    if (!p) return null;
+    let y = p.y;
+    if (!p.hasYear) {
+      const r = ref || todayLocal();
+      const ry = +r.slice(0, 4);
+      y = ry;
+      const cand = y + '-' + pad2(p.m) + '-' + pad2(p.d);
+      if (dayNum(cand) > dayNum(r) + 7) y = ry - 1;
+    }
+    const d = Math.min(p.d, daysInMonth(y, p.m));
+    return y + '-' + pad2(p.m) + '-' + pad2(d);
+  }
+  const dateAnyRe = /(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4}|\d{2})(?!\d)/;
+  /** a full date in a string ("15/10/2026", "4 de outubro de 2026") -> ISO | null */
+  function fullDateIn(s) {
+    const f = fold(s);
+    let m = f.match(dateAnyRe);
+    if (m) { const p = parseDateParts(m[0], 'DD/MM/YYYY'); if (p && p.hasYear) return dateFromParts(p); }
+    m = f.match(new RegExp('(\\d{1,2})\\s*(?:DE\\s+)?(?:' + MON_ALT + ')\\.?\\s*(?:DE\\s+)?(\\d{4})'));
+    if (m) { const p = parseDateParts(m[0].replace(/\s+/g, ' '), null); if (p && p.hasYear) return dateFromParts(p); }
+    return null;
+  }
+
+  /** label → value: the value in the same segment after the label, the next segment of the line, or the segment right
+   *  below the label (1–3 lines, overlapping x). -> { text, line } | null */
+  function labelValue(lines, i, si, labelEnd, want) {
+    const L = lines[i], s = L.segs[si];
+    const ok = v => v && !/^\s*[A-Za-zÀ-ú]{3,}/.test(v) && (!want || want(v));
+    const rest = s.str.slice(labelEnd).replace(/^[\s:–-]+/, '');
+    if (rest) return rest && (!want || want(rest)) ? rest : null;
+    for (let k = si + 1; k < L.segs.length; k++) {
+      const n = L.segs[k];
+      if (ok(n.str) && (want === isMoneyStr || n.x - s.x2 < 160)) return n.str;
+      if (want !== isMoneyStr) break;
+    }
+    for (let k = i + 1; k < Math.min(lines.length, i + 4); k++) {
+      const N = lines[k];
+      if (N.page !== L.page) break;
+      const hit = N.segs.find(t => t.x < s.x2 + 4 && t.x2 > s.x - 4);
+      if (hit && ok(hit.str)) return hit.str;
+    }
+    return null;
+  }
+  const isMoneyStr = v => { MONEY_RE.lastIndex = 0; return MONEY_RE.test(fold(v)); };
+  const isDateStr = v => !!fullDateIn(v);
+  const moneyOf = (v, ctx) => { const t = v ? moneyTokens({ text: v, segs: [{ str: v, x: 0, x2: 1 }], offs: [0] }, ctx).toks[0] : null; return t ? (t.neg ? -t.cents : t.cents) : null; };
+
+  const DTOK = '(\\d{1,2}\\/\\d{1,2}(?:\\/\\d{2,4})?|\\d{1,2}\\s+(?:DE\\s+)?(?:' + MON_ALT + ')\\.?(?:\\s+(?:DE\\s+)?\\d{4})?)';
+  const CYCLE_RE = new RegExp('(?:CONSUMOS?|COMPRAS|LANCAMENTOS|MOVIMENTACOES|TRANSACOES|PERIODO(?:\\s+VIGENTE)?|REFERENTE|EXTRATO)[^0-9]{0,30}?(?:DE\\s+|DO\\s+DIA\\s+|:\\s*)?' + DTOK + '\\s*(?:A|ATE|-|–|E)\\s*' + DTOK + '(?![\\d/])');
+  /** where a label ends inside its segment: right before the first money token (if any) */
+  function labelEndOf(f) { MONEY_RE.lastIndex = 0; const m = MONEY_RE.exec(f); return m ? m.index : f.length; }
+  /** metadata of the statement: dates, totals, cycle, card digits */
+  function pdfMeta(lines, opts) {
+    const meta = { dueDate: null, issueDate: null, closeDate: null, cycleStart: null, cycleEnd: null, total: null, previousBalance: null, openingBalance: null, closingBalance: null, cardLast4: null, currency: null, labels: {} };
+    const LBL = [
+      ['dueDate', /\b(?:VENCE(?:\s+EM)?|VENCIMENTO(?:\s+DA\s+FATURA)?|DATA\s+DE\s+VENCIMENTO|PAGAR\s+ATE|PAGUE\s+ATE)\b\s*:?/],
+      ['issueDate', /\b(?:EMITIDA\s+EM|EMITIDO\s+EM|DATA\s+DE\s+EMISSAO|EMISSAO|EXTRATO\s+ATUALIZADO\s+EM|ATUALIZADO\s+EM|GERADO\s+EM|PDF\s+GERADO\s+EM|DATA\s+DO\s+EXTRATO|EXTRATO\s+GERADO\s+EM)\b\s*:?/],
+      ['closeDate', /\b(?:FECHAMENTO(?:\s+DA\s+FATURA)?|DATA\s+DE\s+FECHAMENTO|DATA\s+DO\s+CORTE|CORTE)\b\s*:?/]
+    ];
+    const months = { };
+    for (let i = 0; i < lines.length; i++) {
+      const L = lines[i];
+      for (let si = 0; si < L.segs.length; si++) {
+        const f = fold(L.segs[si].str);
+        for (const [key, re] of LBL) {
+          if (meta[key]) continue;
+          const m = re.exec(f);
+          if (!m || (key === 'closeDate' && /PROXIMO|PROXIMA/.test(f.slice(0, m.index + 4)))) continue;
+          const v = labelValue(lines, i, si, m.index + m[0].length, isDateStr);
+          const d = v ? fullDateIn(v) : null;
+          if (d) meta[key] = d;
+        }
+        // totals
+        if (meta.total == null && /\b(?:TOTAL\s+(?:A\s+PAGAR|DESTA\s+FATURA|DA\s+FATURA(?!\s+(?:DE|DO\s+MES)\s+[A-Z]+)|DA\s+SUA\s+FATURA)|VALOR\s+(?:TOTAL\s+)?(?:DA\s+FATURA|A\s+PAGAR)|VALOR\s+TOTAL\s+DESTA\s+FATURA)\b/.test(f)) {
+          const v = labelValue(lines, i, si, labelEndOf(f), isMoneyStr);
+          const val = moneyOf(v, opts);
+          if (val != null) meta.total = val;
+        }
+        // previous fatura balance ("Total da fatura de agosto", "Saldo anterior", "Fatura anterior")
+        let pm = /\b(?:TOTAL\s+DA\s+FATURA\s+(?:DE|DO\s+MES\s+DE)\s+([A-Z]+)|FATURA\s+ANTERIOR|SALDO\s+(?:DA\s+FATURA\s+)?ANTERIOR|SALDO\s+INICIAL)\b/.exec(f);
+        if (pm) {
+          const v = labelValue(lines, i, si, labelEndOf(f), isMoneyStr);
+          const val = moneyOf(v, opts);
+          if (val != null) {
+            if (pm[1]) months[pm[1]] = val; else if (/SALDO/.test(pm[0])) { if (meta.openingBalance == null) meta.openingBalance = val; if (meta.previousBalance == null) meta.previousBalance = val; }
+            else if (meta.previousBalance == null) meta.previousBalance = val;
+          }
+        }
+        // closing balance of an extrato
+        if (/\bSALDO\s+(?:FINAL|ATUAL|TOTAL|DISPONIVEL|EM\s+CONTA|DO\s+DIA)\b|^SALDO$/.test(f)) {
+          const val = moneyOf(labelValue(lines, i, si, labelEndOf(f), isMoneyStr), opts);
+          if (val != null) meta.closingBalance = val;
+        }
+      }
+      const f = fold(L.text);
+      // cycle / period: "Consumos de 03/08 a 02/09", "Período: 01/09/2026 a 30/09/2026", "de 03/07/2026 até 01/10/2026"
+      if (!meta.cycleStart) {
+        const cm = CYCLE_RE.exec(f);
+        if (cm) meta._cycle = [cm[1].replace(/\s+/g, ' '), cm[2].replace(/\s+/g, ' ')];
+      }
+      if (meta.cardLast4 == null) {
+        const km = /(?:CARTAO|CARD|FINAL|TERMINADO\s+EM|VISA|MASTERCARD|MASTER|ELO|AMEX|HIPERCARD)[^0-9\n]{0,24}?(?:[*X•.]{2,}\s*)(\d{4})\b|\b(?:FINAL|TERMINADO\s+EM)\s+(\d{4})\b/.exec(f);
+        if (km) meta.cardLast4 = km[1] || km[2];
+      }
+      if (!meta.currency) { const cm2 = /\b(?:MOEDA|CURRENCY)\s*:?\s*([A-Z]{3})\b/.exec(f); if (cm2 && ISO_CODES.includes(cm2[1])) meta.currency = cm2[1]; }
+    }
+    // a "Total da fatura de <month>" is the previous fatura when the month is not the due month, else this one
+    const dueM = meta.dueDate ? +meta.dueDate.slice(5, 7) : null;
+    for (const [mn, val] of Object.entries(months)) {
+      const mo = monthFromName(mn);
+      if (!mo) continue;
+      if (dueM && mo !== dueM && meta.previousBalance == null) meta.previousBalance = val;
+      else if (dueM && mo === dueM && meta.total == null) meta.total = val;
+    }
+    // reference date for year-less dates: due date, else closing, else issue date, else the latest full date seen
+    const ref = meta.dueDate || meta.closeDate || meta.issueDate || (opts && opts.today) || null;
+    if (meta._cycle) {
+      const pa = parseDateParts(meta._cycle[0].replace(/\bDE\s+/g, ''), 'DD/MM/YYYY'), pb = parseDateParts(meta._cycle[1].replace(/\bDE\s+/g, ''), 'DD/MM/YYYY');
+      if (pa && pb) {
+        const end = dateFromParts(pb, ref);
+        let start = pa.hasYear ? dateFromParts(pa) : dateFromParts(pa, end);
+        if (start > end) start = dateFromParts(Object.assign({}, pa, { hasYear: true, y: +end.slice(0, 4) - 1 }));
+        if (dayNum(end) - dayNum(start) <= 70 || pa.hasYear) { meta.cycleStart = start; meta.cycleEnd = end; }
+      }
+      delete meta._cycle;
+    }
+    if (!meta.closeDate && meta.cycleEnd && meta.dueDate) meta.closeDate = addDays(meta.cycleEnd, 1);
+    meta.ref = ref;
+    return meta;
+  }
+
+  const SECTION_REASON_LBL = { resumo: 'resumo', futuras: 'próximas faturas / lançamentos futuros', ofertas: 'ofertas de parcelamento', limites: 'limites', totais: 'totais', saldos: 'saldos', cabecalho: 'cabeçalhos e rodapés repetidos', sem_data: 'valores sem data', info: 'taxas e informações' };
+
+  /** analyzePdf({ items, pages, pageSizes } | items, { fileName?, today? }) -> analysis in the SAME shape as analyzeTable
+   *  (rows = a reconstructed table with a header row, columns with roles, formats, fingerprint), plus analysis.pdf =
+   *  { kind: fatura|extrato|beneficio|null, meta, excluded: [{ reason, label, count, samples }], sections, records, pages,
+   *    accountType, checksum } and analysis.source = 'pdf'. */
+  function analyzePdf(input, opts) {
+    opts = opts || {};
+    const items = isArr(input) ? input : (input && input.items) || [];
+    const pageSizes = (input && input.pageSizes) || [];
+    const nPages = (input && input.pages) || items.reduce((a, i) => Math.max(a, i.page || 1), 0) || 1;
+    const lines = pdfLines(items);
+    const allText = fold(lines.map(l => l.text).join('\n'));
+    const tokCtx = { dollar: /\bDOLAR|\bDOLLAR/.test(allText), numberFormat: null };
+    // number format: BR unless the amounts say otherwise
+    const nfVotes = [];
+    for (const l of lines) { MONEY_RE.lastIndex = 0; let m; const f = fold(l.text); while ((m = MONEY_RE.exec(f)) && nfVotes.length < 400) nfVotes.push(m[5]); }
+    const nf = detectNumberFormat(nfVotes);
+    tokCtx.numberFormat = nf.format;
+    // 1. repeated page headers/footers (top/bottom bands, same text with digits masked, on ≥ 2 pages)
+    const pageH = p => (pageSizes[p - 1] && pageSizes[p - 1].h) || Math.max(...lines.filter(l => l.page === p).map(l => l.y + l.h), 792);
+    const pageY0 = p => (pageSizes[p - 1] && pageSizes[p - 1].y0) || 0;
+    const band = l => { const H = pageH(l.page), y = l.y - pageY0(l.page); return y > H * 0.86 || y < H * 0.1; };
+    const rkey = l => fold(l.text).replace(/\d/g, '#').replace(/\s+/g, ' ').trim();
+    const seen = new Map();
+    for (const l of lines) if (band(l)) { const k = rkey(l); if (!seen.has(k)) seen.set(k, new Set()); seen.get(k).add(l.page); }
+    for (const l of lines) {
+      const k = rkey(l);
+      const pg = seen.get(k);
+      l.repeat = !!(band(l) && pg && pg.size >= 2 && (nPages <= 2 || pg.size >= Math.ceil(nPages / 2))) || /^(?:PAGINA|PAG\.?|PAGE)\s*#+\s*(?:DE|\/|OF)\s*#+$/.test(k) || /^#+\s*(?:\/|DE)\s*#+$/.test(k) && band(l);
+    }
+    const meta = pdfMeta(lines.filter(l => !l.repeat || /VENC|EMIT|ATUALIZADO|GERADO/.test(fold(l.text))), tokCtx);
+    // 2. per-line features
+    for (const l of lines) {
+      const f = fold(l.text);
+      l.f = f;
+      const mt = moneyTokens(l, tokCtx);
+      l.toks = mt.toks; l.rates = mt.rates;
+      let dm = f.replace(WEEKDAY_RE, '');
+      const off = f.length - dm.length;
+      const lead = LEAD_DATE_RE.exec(dm);
+      l.date = null;
+      if (lead) {
+        const p = parseDateParts(lead[1].replace(/\s+/g, ' '), 'DD/MM/YYYY');
+        if (p) l.date = { p, start: off + lead.index, end: off + lead.index + lead[0].length };
+      }
+      const rest = l.date ? f.slice(l.date.end) : f;
+      const letters = (rest.match(/[A-Z]/g) || []).length;
+      // a line that is only a date (+ weekday): a header for the records below it
+      l.dateHeader = !!(l.date && !l.toks.length && !/[A-Z]{2,}/.test(f.slice(l.date.end).replace(/\b(?:FEIRA|DE|HOJE|ONTEM)\b/g, '')) && (l.date.p.hasYear || /[A-Z]{3}/.test(f.slice(l.date.start, l.date.end))));
+      const words = f.split(/\s{2,}|\s(?=[A-Z])/).map(w => w.trim()).filter(Boolean);
+      const hw = l.segs.filter(s => HEADER_WORD_RE.test(fold(s.str).trim())).length;
+      l.tableHeader = !l.toks.length && !l.date && hw >= 2 && l.segs.length >= 2 && hw >= l.segs.length * 0.6 && words.length <= 12;
+      l.letters = letters;
+    }
+    // 3. amount columns: cluster right edges of the money tokens on dated lines; roles from the table header + running balance
+    const tokLines = lines.filter(l => !l.repeat && l.toks.length);
+    const clusters = [];
+    for (const l of tokLines) for (const t of l.toks) {
+      let c = clusters.find(c => Math.abs(c.x - t.x2) <= 9);
+      if (!c) { c = { x: t.x2, n: 0, cur: {}, hdr: null }; clusters.push(c); }
+      c.n++; c.cur[t.currency || '-'] = (c.cur[t.currency || '-'] || 0) + 1;
+      t.col = c;
+    }
+    for (const h of lines.filter(l => l.tableHeader)) {
+      for (const s of h.segs) {
+        const w = fold(s.str);
+        for (const c of clusters) {
+          if (c.x >= s.x - 8 && c.x <= s.x2 + 40 && (!c.hdrDist || Math.abs(c.x - s.x2) < c.hdrDist)) {
+            c.hdrDist = Math.abs(c.x - s.x2);
+            c.hdr = /SALDO/.test(w) ? 'balance' : /US\$|U\$|USD|DOLAR|MOEDA|EUR|€|ORIGINAL|ESTRANGEIR/.test(w) ? 'foreign' : /COTACAO|CAMBIO/.test(w) ? 'rate' : 'amount';
+          }
+        }
+      }
+    }
+    // doc currency: every token carries the same foreign marker and none is BRL → a foreign account
+    const allToks = tokLines.flatMap(l => l.toks);
+    const curCount = {};
+    allToks.forEach(t => { if (t.currency) curCount[t.currency] = (curCount[t.currency] || 0) + 1; });
+    const foreignCodes = Object.keys(curCount).filter(c => c !== 'BRL');
+    let docCurrency = 'BRL';
+    if (!curCount.BRL && foreignCodes.length === 1 && curCount[foreignCodes[0]] >= Math.max(2, allToks.length * 0.6)) docCurrency = foreignCodes[0];
+    if (meta.currency && meta.currency !== 'BRL' && !curCount.BRL) docCurrency = meta.currency;
+    const tokRole = t => {
+      if (t.col && t.col.hdr === 'balance') return 'balance';
+      if (t.col && t.col.hdr === 'rate') return 'rate';
+      if (t.currency && t.currency !== 'BRL' && docCurrency === 'BRL') return 'foreign';
+      if (t.col && t.col.hdr === 'foreign' && docCurrency === 'BRL' && t.currency !== 'BRL') return 'foreign';
+      return 'amount';
+    };
+    const isBenefit = (BENEFIT_DOC_RE.test(allText) && (allText.match(new RegExp(BENEFIT_DOC_RE.source, 'g')) || []).length >= 2 && !meta.dueDate);
+    const moneyLines = lines.filter(l => !l.repeat && l.toks.length);
+    const usesDateHeaders = lines.filter(l => l.dateHeader).length >= 2 && moneyLines.filter(l => l.date).length < moneyLines.length * 0.5;
+    // 4. walk the lines: sections, date headers, records, details, exclusions
+    const excluded = {};
+    const exclude = (reason, l) => { const e = excluded[reason] = excluded[reason] || { reason, label: SECTION_REASON_LBL[reason] || reason, count: 0, samples: [] }; e.count++; if (e.samples.length < 6) e.samples.push(l.text); };
+    const records = [];
+    const sections = [];
+    let section = null, skipReason = null, hdrDate = null, last = null;
+    const body = lines.filter(l => !l.repeat);
+    lines.filter(l => l.repeat && l.toks.length).forEach(l => exclude('cabecalho', l));
+    const repeatedCount = new Set(lines.filter(l => l.repeat).map(rkey)).size;
+    const next = i => { for (let k = i + 1; k < body.length; k++) if (!body[k].isDetail) return body[k]; return null; };
+    for (let i = 0; i < body.length; i++) {
+      const l = body[i];
+      const f = l.f;
+      if (l.dateHeader && usesDateHeaders) { if (!skipReason) hdrDate = l.date.p; last = null; continue; }
+      if (l.tableHeader) { last = null; continue; }
+      const amtToks = l.toks.filter(t => { const r = tokRole(t); return r === 'amount' || r === 'foreign'; });
+      const hasDate = !!l.date && !(l.dateHeader && usesDateHeaders);
+      // a detail line: no date and no booked amount, right under a record (closer to it than to the next line)
+      if (last && !hasDate && !amtToks.some(t => tokRole(t) === 'amount') && l.page === last.line.page) {
+        const nx = body[i + 1];
+        const gapNext = nx && nx.page === l.page ? l.y - nx.y : Infinity;
+        const prevY = last.lastY != null ? last.lastY : last.line.y;
+        const g = prevY - l.y;
+        if (g > 0 && g <= Math.max(last.line.h, l.h) * 2.3 && g <= gapNext + 0.5 && l.x >= last.descX - 12 && !TOTAL_LINE_RE.test(f) && !SALDO_LINE_RE.test(f)) {
+          last.details.push(l); last.lastY = l.y; l.isDetail = true;
+          continue;
+        }
+      }
+      last = null;
+      if (!l.toks.length) {
+        // title of a section: text followed by records / a table header / date headers
+        const nx = next(i);
+        const short = l.text.length <= 80 && l.letters >= 3 && !/[.;]$/.test(l.text.trim()) && !/[|]|:\s*\S/.test(l.text) && !fullDateIn(l.text);
+        let skipHere = null;
+        if (l.text.length <= 60 && l.letters >= 4 && !/^[a-zà-ú]/.test(l.text.trim())) for (const [reason, re] of SKIP_SECTIONS) if (re.test(f)) { skipHere = reason; break; }
+        if (short && nx && (nx.tableHeader || (nx.dateHeader && usesDateHeaders) || (nx.toks.length && (nx.date || hdrDate)))) {
+          const title = l.text.replace(/\s{2,}/g, ' ').trim();
+          section = title;
+          skipReason = null;
+          for (const [reason, re] of SKIP_SECTIONS) if (re.test(f)) { skipReason = reason; break; }
+          sections.push({ title, skip: skipReason, page: l.page });
+          if (skipReason) hdrDate = null;
+        } else if (skipHere) { skipReason = skipHere; hdrDate = null; sections.push({ title: l.text.replace(/\s{2,}/g, ' ').trim(), skip: skipHere, page: l.page, region: true }); }
+        continue;
+      }
+      // lines with money
+      const dateP = hasDate ? l.date.p : hdrDate;
+      const descRaw = lineDescription(l, isBenefit);
+      const fd = fold(descRaw);
+      let reason = null;
+      if (skipReason) reason = skipReason;
+      else if (OFFER_LINE_RE.test(f)) reason = 'ofertas';
+      else if (!/[A-Z]{2}/.test(fd)) {
+        // an amount without words: the text above it (overlapping it) is its label ("Saldo total" / "R$ 1.234,56")
+        let prev = null;
+        for (let k = i - 1; k >= Math.max(0, i - 4) && !prev; k--) if (body[k].page === l.page && body[k].segs.some(s => s.x < l.x2 + 4 && s.x2 > l.x - 4)) prev = body[k];
+        const pf = prev ? fold(prev.text) : '';
+        reason = l.toks.every(t => tokRole(t) === 'balance') || SALDO_LINE_RE.test(pf) ? 'saldos' : TOTAL_LINE_RE.test(pf) ? 'totais' : LIMIT_LINE_RE.test(pf) ? 'limites' : 'sem_data';
+      }
+      else if (SALDO_LINE_RE.test(fd)) reason = 'saldos';
+      else if (TOTAL_LINE_RE.test(fd)) reason = 'totais';
+      else if (LIMIT_LINE_RE.test(fd)) reason = 'limites';
+      else if (INFO_LINE_RE.test(f) && !hasDate) reason = 'info';
+      else if (!dateP) reason = 'sem_data';
+      else if (!amtToks.length) reason = l.toks.some(t => tokRole(t) === 'balance') ? 'saldos' : 'sem_data';
+      if (reason) { exclude(reason, l); continue; }
+      const rec = { line: l, page: l.page, y: l.y, dateP, desc: descRaw, details: [], section, toks: l.toks, descX: descStartX(l), rates: l.rates.slice() };
+      records.push(rec);
+      last = rec;
+    }
+    // 5. finish records: details (time, wallet, parcela, foreign amount, rate), amounts, signs
+    const ref = meta.ref || latestFullDate(lines) || opts.today || todayLocal();
+    for (const r of records) {
+      const dtext = r.details.map(d => d.text).join(' · ');
+      const fAll = fold(r.line.text + ' ' + dtext);
+      for (const d of r.details) { r.toks = r.toks.concat(d.toks); r.rates = r.rates.concat(d.rates); }
+      const tm = TIME_IN_RE.exec(fold(r.line.text.slice(r.line.date ? r.line.date.end : 0)) + ' ' + fold(dtext));
+      r.time = tm && !(tm[1] === '00' && tm[2] === '00') && !(+tm[1] === 0 && tm[2] === '00') ? pad2(+tm[1]) + ':' + tm[2] : null;
+      const im = INST_IN_RE.exec(fAll) || r.line.segs.slice(1).map(s => INST_SEG_RE.exec(fold(s.str)) && /PARC|DE/.test(fold(s.str)) ? INST_SEG_RE.exec(fold(s.str)) : null).find(Boolean);
+      r.inst = im && +im[1] >= 1 && +im[2] >= 2 && +im[1] <= +im[2] && +im[2] <= 72 ? { n: +im[1], total: +im[2] } : null;
+      if (isBenefit) { const wm = WALLET_RE.exec(fold(dtext)) || WALLET_RE.exec(fold(r.line.text)); r.wallet = wm ? (WALLET_NAME[wm[1].replace(/\s+/g, ' ')] || titleCase(wm[1])) : null; }
+      // amounts
+      const amt = r.toks.filter(t => tokRole(t) === 'amount');
+      const frg = r.toks.filter(t => tokRole(t) === 'foreign');
+      const bal = r.toks.filter(t => tokRole(t) === 'balance');
+      const booked = amt.length ? amt[amt.length - 1] : (docCurrency !== 'BRL' ? frg[frg.length - 1] : null);
+      r.tok = booked || null;
+      r.balance = bal.length ? (bal[bal.length - 1].neg ? -bal[bal.length - 1].cents : bal[bal.length - 1].cents) : null;
+      if (docCurrency === 'BRL' && frg.length) {
+        const ft = frg[0];
+        r.fx = { currency: ft.currency || 'USD', amount: ft.cents, rate: r.rates.length ? r.rates[0].rate : null };
+      } else r.fx = null;
+      r.date = dateFromParts(r.dateP, ref);
+      r.creditKw = CREDIT_LINE_RE.test(fold(r.desc)) && !CHARGE_LINE_RE.test(fold(r.desc));
+      r.sectionDir = r.section ? (IN_SECTION_RE.test(fold(r.section)) && !OUT_SECTION_RE.test(fold(r.section)) ? 1 : OUT_SECTION_RE.test(fold(r.section)) ? -1 : 0) : 0;
+    }
+    // statement kind
+    const fatSignals = [meta.dueDate, /\bFATURA\b/.test(allText), /TOTAL A PAGAR|PAGAMENTO MINIMO|LIMITE (?:TOTAL|DISPONIVEL)|MELHOR DIA DE COMPRA/.test(allText), records.some(r => r.inst)].filter(Boolean).length;
+    let kind = isBenefit ? 'beneficio' : fatSignals >= 2 ? 'fatura' : (/\bEXTRATO\b|\bSALDO\b|CONTA CORRENTE|AGENCIA/.test(allText) || records.some(r => r.balance != null)) ? 'extrato' : fatSignals ? 'fatura' : null;
+    // signs
+    const withTok = records.filter(r => r.tok);
+    const nMinus = withTok.filter(r => r.tok.neg).length, nPlus = withTok.filter(r => r.tok.plus).length;
+    let minusIsCredit = false;
+    if (kind === 'fatura' && nMinus && !nPlus) {
+      const kw = withTok.filter(r => r.tok.neg && r.creditKw).length;
+      minusIsCredit = kw / nMinus >= 0.5 || nMinus / withTok.length < 0.3;
+    }
+    for (const r of withTok) {
+      let s;
+      if (r.tok.neg) s = minusIsCredit ? 1 : -1;
+      else if (r.tok.plus) s = 1;
+      else if (kind === 'fatura') s = (nPlus && nMinus) ? -1 : (minusIsCredit ? -1 : (r.creditKw || r.sectionDir > 0 ? 1 : -1));
+      else if (nMinus && !nPlus) s = 1;
+      else if (nPlus && !nMinus) s = -1;
+      else s = r.sectionDir || (r.creditKw ? 1 : -1);
+      r.amount = s * r.tok.cents;
+      if (r.fx) r.fx.amount = Math.sign(r.amount) * r.fx.amount;
+    }
+    // running balance check (unsigned extratos): balance deltas decide the sign
+    if (kind !== 'fatura' && !nMinus && !nPlus) {
+      let prev = null;
+      for (const r of withTok) {
+        if (r.balance == null) continue;
+        if (prev && prev.balance != null) {
+          const d = r.balance - prev.balance;
+          if (Math.abs(Math.abs(d) - Math.abs(r.amount)) <= 1) r.amount = Math.sign(d) * Math.abs(r.amount);
+        }
+        prev = r;
+      }
+    }
+    // 6. the reconstructed table
+    const hasInst = records.some(r => r.inst), hasTime = records.some(r => r.time), hasFx = records.some(r => r.fx), hasRate = records.some(r => r.fx && r.fx.rate);
+    const hasSection = records.some(r => r.section), hasDetail = records.some(r => r.details.length), hasWallet = records.some(r => r.wallet), hasBal = records.some(r => r.balance != null);
+    const cols = [['date', 'Data'], ['description', 'Descrição']];
+    if (hasInst) cols.push(['installment', 'Parcela']);
+    if (hasTime) cols.push(['time', 'Hora']);
+    cols.push(['amount', docCurrency === 'BRL' ? 'Valor em R$' : 'Valor (' + docCurrency + ')']);
+    if (hasFx) { cols.push(['fxAmount', 'Valor (moeda estrangeira)']); cols.push(['fxCurrency', 'Moeda']); }
+    if (hasRate) cols.push(['fxRate', 'Cotação']);
+    if (hasBal) cols.push(['balance', 'Saldo']);
+    if (hasWallet) cols.push(['tag', 'Carteira']);
+    if (hasSection) cols.push(['section', 'Seção']);
+    if (hasDetail) cols.push(['detail', 'Detalhe']);
+    const money = c => (c < 0 ? '-' : '') + String(Math.floor(Math.abs(c) / 100)) + ',' + pad2(Math.abs(c) % 100);
+    const rows = [cols.map(c => c[1])];
+    for (const r of records) {
+      const v = {
+        date: r.date ? r.date.slice(8, 10) + '/' + r.date.slice(5, 7) + '/' + r.date.slice(0, 4) : '', description: r.desc || '(sem descrição)', installment: r.inst ? r.inst.n + '/' + r.inst.total : '', time: r.time || '',
+        amount: r.amount != null ? money(r.amount) : '', fxAmount: r.fx ? money(r.fx.amount) : '', fxCurrency: r.fx ? r.fx.currency : '',
+        fxRate: r.fx && r.fx.rate ? String(r.fx.rate).replace('.', ',') : '', balance: r.balance != null ? money(r.balance) : '', tag: r.wallet || '',
+        section: r.section || '', detail: r.details.map(d => d.text.replace(/\s{2,}/g, ' ')).join(' · ').slice(0, 160)
+      };
+      rows.push(cols.map(c => v[c[0]]));
+    }
+    // 7. fingerprint: table headers + section titles + first title lines, digits/months masked
+    const mask = s => fold(s).replace(/\d+/g, '').replace(new RegExp('\\b(?:' + MON_ALT + ')\\b', 'g'), '').replace(/[^A-Z$€£ ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const hdrs = [...new Set(lines.filter(l => l.tableHeader).map(l => mask(l.text)))].slice(0, 4);
+    const secs = [...new Set(sections.filter(s => !s.skip).map(s => mask(s.title)).filter(Boolean))].slice(0, 6);
+    const top = lines.filter(l => l.page === 1 && !/\d/.test(l.text) && l.letters >= 3).slice(0, 2).map(l => mask(l.text));
+    const fpSrc = ['PDF', kind, docCurrency, hdrs.join(';'), secs.join(';'), top.join(';'), lines.some(l => l.dateHeader) ? 'DH' : '', hasDetail ? 'ML' : ''].join('|');
+    const fingerprint = 'fpdf_' + hashStr(fpSrc);
+    const columns = cols.map((c, j) => ({ index: j, header: c[1], role: c[0],
+      confidence: 0.9, samples: rows.slice(1, 6).map(r => r[j]).filter(Boolean) }));
+    const warnings = [];
+    if (!records.length) warnings.push('Não encontrei lançamentos (linhas com data e valor) neste PDF.');
+    const exList = Object.values(excluded).sort((a, b) => b.count - a.count);
+    if (repeatedCount && !excluded.cabecalho) exList.push({ reason: 'cabecalho', label: SECTION_REASON_LBL.cabecalho, count: repeatedCount, samples: [...new Set(lines.filter(l => l.repeat).map(l => l.text))].slice(0, 4) });
+    const pdf = {
+      kind, meta, excluded: exList, sections, pages: nPages, currency: docCurrency, lineCount: lines.length,
+      accountType: kind === 'fatura' ? 'credit_card' : kind === 'beneficio' ? 'benefit' : kind === 'extrato' ? 'checking' : null,
+      records: records.map((r, k) => ({ row: k + 1, page: r.page, section: r.section || null, date: r.date, amount: r.amount, inst: r.inst, time: r.time, wallet: r.wallet || null, fx: r.fx, balance: r.balance }))
+    };
+    pdf.checksum = pdfChecksum(pdf, records.map(r => ({ amount: r.amount || 0 })));
+    const conf = records.length ? (pdf.checksum && pdf.checksum.ok ? 0.95 : 0.85) : 0.2;
+    return {
+      source: 'pdf', rows, delimiter: null, delimiterConfidence: 1, encoding: 'pdf', headerRowIndex: 0, dataStart: 1, dataEnd: rows.length - 1, skippedRows: [], columns,
+      numberFormat: 'br', numberFormatConfidence: 1, dateFormat: 'DD/MM/YYYY', dateFormatConfidence: 1, signConvention: 'negative_is_expense', signConfidence: records.length ? 0.9 : 0.2,
+      fingerprint, overallConfidence: conf, warnings, width: cols.length, currency: docCurrency, pdf
+    };
+  }
+  function titleCase(s) { return String(s || '').toLowerCase().replace(/(^|\s)\S/g, x => x.toUpperCase()); }
+  function latestFullDate(lines) {
+    let best = null;
+    for (const l of lines) { const d = fullDateIn(l.text); if (d && (!best || d > best)) best = d; }
+    return best;
+  }
+  /** a record line's description: its text without the date, money, rates, parcela and time */
+  function lineDescription(l, benefit) {
+    const cut = [];
+    if (benefit) l.segs.forEach((s, k) => { if (new RegExp('^(?:' + WALLET_RE.source + ')$').test(fold(s.str).trim())) cut.push([l.offs[k], l.offs[k] + s.str.length]); });
+    if (l.date) cut.push([l.date.start, l.date.end]);
+    for (const t of l.toks) cut.push([t.start, t.end]);
+    for (const r of l.rates) cut.push([r.start, r.end]);
+    const f = l.f;
+    let m;
+    const im = new RegExp(INST_IN_RE.source, 'g');
+    while ((m = im.exec(f))) cut.push([m.index, m.index + m[0].length]);
+    const tm = new RegExp(TIME_IN_RE.source, 'g');
+    while ((m = tm.exec(f))) cut.push([m.index, m.index + m[0].length]);
+    // a plain "n/N" segment after the description that the header calls Parcela, or that looks like one next to a full date
+    let out = '';
+    let pos = 0;
+    cut.sort((a, b) => a[0] - b[0]);
+    for (const [a, b] of cut) { if (a > pos) out += l.text.slice(pos, a) + ' '; pos = Math.max(pos, b); }
+    out += l.text.slice(pos);
+    return out.replace(/\s+/g, ' ').replace(/^[\s•·|\-–—:]+|[\s•·|\-–—:]+$/g, '').trim();
+  }
+  function descStartX(l) { return l.date ? posX(l, Math.min(l.text.length - 1, l.date.end + 1)) : l.x; }
+
+  /** pdfChecksum(pdf analysis part, transactions) -> { kind, expected, computed, diff, ok, parts } | null
+   *  fatura: total = previous balance + purchases + charges − payments/credits (sum of the rows, sign flipped);
+   *  extrato: closing balance − opening balance = sum of the rows. */
+  function pdfChecksum(pdf, txs) {
+    if (!pdf || !pdf.meta) return null;
+    const m = pdf.meta;
+    const list = (txs || []).filter(t => t && !t.deleted);
+    const out = list.filter(t => t.amount < 0).reduce((s, t) => s - t.amount, 0);
+    const inn = list.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
+    if (pdf.kind === 'fatura' && m.total != null) {
+      const prev = m.previousBalance || 0;
+      const computed = prev + out - inn;
+      return { kind: 'fatura', expected: m.total, computed, diff: computed - m.total, ok: Math.abs(computed - m.total) <= 1, parts: { previous: prev, debits: out, credits: inn } };
+    }
+    if (m.openingBalance != null && m.closingBalance != null) {
+      const computed = m.openingBalance + inn - out;
+      return { kind: 'extrato', expected: m.closingBalance, computed, diff: computed - m.closingBalance, ok: Math.abs(computed - m.closingBalance) <= 1, parts: { opening: m.openingBalance, debits: out, credits: inn } };
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
   // AI prompt + validation
   // ---------------------------------------------------------------------------
   function buildAIPrompt(analysis) {
@@ -3812,7 +4654,7 @@
 
   // ---------------------------------------------------------------------------
   const FinEngine = {
-    version: '2.4.0',
+    version: '2.4.1',
     decodeBytes, analyzeTable, analyzeRows, profileFromAnalysis, applyProfile, matchProfile,
     parseAmount, detectNumberFormat, parseDate, normalizeDescription,
     DEFAULT_CATEGORIES, DEFAULT_DICTIONARY,
@@ -3832,6 +4674,8 @@
     cardCycles, updateAlerts, inferCardDays, fileDates, cycleOfImport,
     // v2.4a
     selectForDeletion, applyDeletion, dataIntegrity,
+    // v2.4b — PDF + foreign currencies
+    readPdf, pdfLines, analyzePdf, pdfChecksum, currencyOf, parseRate, formatFx, fxRateFor, applyFxRates, linkFxIof, fxSummary, walletCategory, ISO_CODES,
     lookupDictionaryEntry: (d, m, r, a) => lookupDictionaryEntry(d || DEFAULT_DICTIONARY, m, r, a),
     // extras (helpers, stable but not part of the contract)
     _internal: { parseDelimited, detectDelimiter, detectDateFormat, norm, stripAccents, hashStr, SKIP_PATTERNS, parseInstallmentText, detectKind }

@@ -155,3 +155,56 @@ The "local" adapter (localStorage) is used for dev, tests and when not signed in
   rows removed, `settings.dismissedAlerts` of removed accounts cleared, profiles' `defaultAccountId` of removed accounts
   cleared; `meta` = changed doc names. `dataIntegrity({ transactions, imports, accounts })` → orphan_import, import_count,
   import_account, unknown_account, dangling_link.
+
+## v2.4b additions — PDF statements + foreign currencies
+- **PDF text** (`FinEngine.readPdf(pdfjsLib, bytes, { password, onPage })`): pdf.js **3.11.174** is injected, so the same
+  engine code runs in the browser and in node tests (`pdfjs-dist` legacy build, devDependency pinned). Items
+  `{str, x, y, w, h, page}`; errors carry `code`: `pdf_password` | `pdf_password_wrong` | `pdf_no_text` (image only) |
+  `pdf_invalid`. `isEvalSupported:false`, no font loading, no network fetches. The password is used for that call only.
+  - Netlify build: `site/vendor/pdf.min.js` + `pdf.worker.min.js` (same files as `pdfjs-dist/build`, Apache-2.0,
+    `vendor/pdf.LICENSE.txt`), loaded only when a PDF is chosen; parsing in a same-origin Web Worker (`worker-src 'self'`).
+  - Artifact build: `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js` and `pdf.worker.min.js`, loaded
+    lazily as `<script>`s (the build checks the URL is cdnjs + pinned). Loading the worker file as a script defines
+    `globalThis.pdfjsWorker`, so pdf.js uses its in-thread "fake worker": no Worker, no cross-origin fetch, no eval
+    (verified under a CSP equal to the allowlist in e2e_v24b).
+- **Layout reconstruction** (pure): `pdfLines(items)` (y clusters with tolerance, x order, word gaps merged, column gaps
+  kept as segments) → `analyzePdf({items,pages,pageSizes})`: repeated top/bottom lines on ≥ 2 pages (digits masked) and
+  "Página x de y" dropped; money tokens (`R$`, `-R$`, `+R$`, `D/C`, `(…)`, trailing `-`, `US$/USD/€/EUR/£/ISO`, rates after
+  "Cotação/conversão" kept apart); amount columns = clusters of right edges, roles from table headers (Saldo / US$ /
+  Cotação) and the currency markers; dates at the line start (`dd/mm`, `dd/mm/aa(aa)`, `3 outubro 2026`, `03 OUT`, `03/out`),
+  date-HEADER lines (only when the document uses them), year-less dates resolved from the due/closing/issue date (≤ 7 days
+  ahead, else previous year); detail lines (closer to the record above than to the next line) give time, wallet, parcela,
+  foreign amount; section titles (text followed by records / a table header); regions excluded by title or line:
+  resumo, limites, ofertas de parcelamento (`1 + [3]x`, `Total:`), lançamentos futuros / próximas faturas, totais, saldos.
+  Signs: explicit sign/D/C; on a fatura unsigned = charge, payment/credit keywords or sections = credit, a "−" only on
+  payments means credit; extratos: the other sign, the running balance, section/keywords.
+  Metadata (`pdf.meta`): due, issue, closing, cycle (`Consumos de 03/08 a 02/09`, `Período …`, `28 AGO a 27 SET`),
+  total, previous fatura balance, opening/closing balance, card last 4, currency. `pdfChecksum`: fatura total = previous
+  + debits − credits; extrato closing = opening + rows. Kind: fatura | extrato | beneficio (→ account type).
+- **Output = the CSV path**: `analysis.rows` is a reconstructed table (Data dd/mm/aaaa, Descrição, Parcela, Hora,
+  Valor em R$, Valor (moeda estrangeira), Moeda, Cotação, Saldo, Carteira, Seção, Detalhe — only the columns that have
+  data) with roles, `source:'pdf'`, `analysis.pdf = { kind, meta, excluded:[{reason,label,count,samples}], sections,
+  records, checksum, accountType, currency }`, fingerprint `fpdf_<hash of table headers + section titles + title lines,
+  digits/months masked>`; profiles from it get `kind:'pdf'`. Same wizard, batch, dedupe, installments, classify.
+- **New profile/tx fields**: column roles `fxAmount`, `fxCurrency`, `fxRate`, `tag`, `section`, `detail`; profile
+  `currency` (foreign-only file). Transactions may carry `fx: { currency, amount (cents, signed like the row), rate?,
+  source?: 'file'|'manual' }`, `tags: [wallet]`, `section`, `detail`; an IOF row gets `linkedTo` = its foreign purchase
+  (`linkFxIof`, also redone by `moveImport`).
+- **Foreign currencies**: CSV headers `Valor US$/USD/EUR/€/Moeda original` → fxAmount (never the BRL amount),
+  `Cotação/Câmbio` → fxRate, `Moeda/Currency` → fxCurrency; cells with markers detected too; a bare `$` is USD only when
+  the file says "dólar". Only foreign amounts → `analysis.currency`/`profile.currency` (account gets `currency`):
+  `applyProfile(…, { fxRates })` books `round(foreign × rate)` with the month's rate from **settings.fxRates**
+  `{ "USD": { "YYYY-MM": 5.2 } }` (exact month; missing → row error + `result.needRates`); `applyFxRates` recomputes
+  `source:'manual'` rows after a rate change. `fxSummary` → Painel "Compras internacionais: R$ X (+ IOF R$ Y)".
+- **Benefit cards**: account type `benefit` ("Benefício (VA/VR)"); "Transferência entre Carteiras" → transfer;
+  money in on a benefit account → income `renda.beneficios`; purchases keep the wallet in `tags` and get a category hint
+  (`walletCategory`: Refeição → alimentacao.restaurante, Alimentação → alimentacao.mercado, …; `catSource:'wallet'`,
+  below rules/learned/dictionary).
+- **Import records** of PDFs: `source:'pdf'`, `docKind`, `pages`, `dueDate`, `cycleStart`/`cycleEnd` (also `from`/`to`),
+  `closeDate` (day after the cycle's last day), `statementTotal`, `cardLast4`. `importGroups` uses `dueDate` as a file date
+  (cycle matching) and `inferCardDays` the printed closing/due; a card without closing/due day is configured from its
+  first PDF fatura.
+- App: file inputs/batch accept `.pdf`; "Lendo PDF… página i de n"; inline "Senha do PDF" (single + batch rows; never
+  stored); image-only message; detection chips + "Ignorado: …" (collapsible, with samples) in steps 2/3 and batch rows;
+  checksum pre-filled with the statement total; rate inputs for foreign-only files; currency badge on rows; filter
+  "Moeda estrangeira"; Ajustes → "Cotações".

@@ -17,10 +17,11 @@ const MES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho'
 const MES3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const KIND_LBL = { expense: 'Saída', income: 'Entrada', transfer: 'Transferência', card_payment: 'Pagamento de fatura', investment: 'Investimento' };
 const TYPE_FILTER_LBL = { expense: 'Gasto', income: 'Entrada', transfer: 'Transferência', card_payment: 'Pagamento de fatura', investment: 'Investimento' };
-const SRC_LBL = { rule: 'regra', learned: 'aprendido', dictionary: 'dicionário', ai: 'IA', manual: 'manual', series: 'lembrado p/ esta compra' };
-const SRC_FILTER = [['rule', 'Regra'], ['learned', 'Aprendido'], ['series', 'Compra parcelada lembrada'], ['dictionary', 'Dicionário'], ['manual', 'Manual'], ['none', 'Sem categoria']];
-const ACC_TYPES = { credit_card: 'Cartão de crédito', checking: 'Conta corrente', savings: 'Poupança', cash: 'Dinheiro', payslip: 'Holerite' };
-const ROLE_LBL = { ignore: 'Ignorar', date: 'Data', time: 'Hora', description: 'Descrição', amount: 'Valor', debit: 'Débito', credit: 'Crédito', dcFlag: 'Indicador D/C', installment: 'Parcela', balance: 'Saldo (ignorar)' };
+const SRC_LBL = { rule: 'regra', learned: 'aprendido', dictionary: 'dicionário', ai: 'IA', manual: 'manual', series: 'lembrado p/ esta compra', wallet: 'pela carteira' };
+const SRC_FILTER = [['rule', 'Regra'], ['learned', 'Aprendido'], ['series', 'Compra parcelada lembrada'], ['dictionary', 'Dicionário'], ['wallet', 'Carteira do benefício'], ['manual', 'Manual'], ['none', 'Sem categoria']];
+const ACC_TYPES = { credit_card: 'Cartão de crédito', checking: 'Conta corrente', savings: 'Poupança', benefit: 'Benefício (VA/VR)', cash: 'Dinheiro', payslip: 'Holerite' };
+const NEW_ACC_TYPES = ['credit_card', 'checking', 'savings', 'benefit', 'cash'];
+const ROLE_LBL = { ignore: 'Ignorar', date: 'Data', time: 'Hora', description: 'Descrição', amount: 'Valor em R$', fxAmount: 'Valor (moeda estrangeira)', fxCurrency: 'Moeda', fxRate: 'Cotação', debit: 'Débito', credit: 'Crédito', dcFlag: 'Indicador D/C', installment: 'Parcela', balance: 'Saldo (ignorar)', tag: 'Carteira', section: 'Seção', detail: 'Detalhe' };
 const SIGN_LBL = { negative_is_expense: 'Negativos = gasto', positive_is_expense: 'Compras positivas = gasto', dc_flag: 'Coluna D/C', split_columns: 'Débito e crédito separados' };
 const SORTS = [['date_desc', 'Data (padrão, mais recentes)'], ['date_asc', 'Data (antigas primeiro)'], ['amt_desc', 'Maior valor'], ['amt_asc', 'Menor valor'], ['merchant', 'Estabelecimento A–Z'], ['category', 'Categoria']];
 const PALETTE = ['#4F7DF3', '#F2994A', '#9B6BF2', '#2BB3C0', '#E25D7B', '#E8B931', '#C86DD7', '#6C8EAD', '#C08457', '#3BA99C', '#D9534F', '#5B8C3A'];
@@ -143,6 +144,8 @@ function accName(id) { const a = (D().accounts || []).find(a => a.id === id); re
 function accType(id) { const a = (D().accounts || []).find(a => a.id === id); return a ? a.type : null; }
 function ctx() { return { rules: D().rules || [], dictionary: (E && E.DEFAULT_DICTIONARY) || [], categories: D().categories, accounts: D().accounts || [] }; }
 const countable = t => t.kind !== 'card_payment' && t.kind !== 'transfer';
+/** v2.4b: a row with a foreign amount — or the IOF tied to one */
+const isFxRow = t => !!(t.fx && t.fx.currency && t.fx.currency !== 'BRL') || !!(t.linkedTo && /\bIOF\b/i.test(t.rawDescription || '') && (() => { const o = txById(t.linkedTo); return o && o.fx; })());
 const isUncat = t => !t.categoryId && countable(t);
 const kindFor = catId => (E && E.kindForCategory ? E.kindForCategory(catId, D().categories) : null);
 const uncatCount = () => live().filter(isUncat).length;
@@ -520,7 +523,7 @@ function renderPainel() {
       <div class="kpi" role="listitem"><span class="eyebrow">Saldo</span><span class="v money ${net < 0 ? 'out' : ''}" id="kpi-net" data-cents="${net}">${brl(net)}</span></div>
       <div class="kpi" role="listitem"><span class="eyebrow">Taxa de poupança</span><span class="v num ${rate != null && rate < 0 ? 'out' : ''}">${rate == null ? '—' : (rate * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%'}</span></div>
     </div>
-    <div class="pn-sum" id="pn-sum">${healthChipHTML()}${carryLineHTML()}</div>
+    <div class="pn-sum" id="pn-sum">${healthChipHTML()}${carryLineHTML()}${fxLineHTML(p)}</div>
     <div class="card" id="sankey-card">
       <div class="card-h">
         <h2>Para onde foi o dinheiro</h2>
@@ -548,6 +551,13 @@ function renderPainel() {
   renderBudget(sum);
   drawSeries();
   renderFuture();
+}
+/* ---------- Painel: international purchases (v2.4b) ---------- */
+function fxLineHTML(p) {
+  const f = eng('fxSummary', live(), { from: p.from, to: p.to });
+  if (!f || (!f.count && !f.iof)) return '';
+  const cur = Object.keys(f.byCurrency || {}).map(c => E.formatFx({ currency: c, amount: f.byCurrency[c].amount })).join(' + ');
+  return `<button type="button" class="pn-fx" id="pn-fx" data-act="fx-list"><span>Compras internacionais: <b class="money">${brl(f.total)}</b>${f.iof ? ` (+ IOF <b class="money">${brl(f.iof)}</b>)` : ''}</span>${cur ? `<span class="xs faint">${esc(cur)}</span>` : ''}</button>`;
 }
 /* ---------- Painel summary: data health chip + accumulated deficit ---------- */
 function healthChipHTML(){
@@ -1627,6 +1637,8 @@ function txMetaBits(t) {
   if (t.installment && t.installment.n) {
     bits.push(`<span data-inst>${t.originalDate ? 'compra em ' + esc(isoToDM(t.originalDate)) + ' · ' : ''}parcela ${t.installment.n}/${t.installment.total}</span>`);
   }
+  if (t.fx && t.fx.currency && t.fx.currency !== 'BRL') bits.push(`<span class="fxb" data-fx title="Valor original${t.fx.rate ? ' · cotação ' + esc(String(t.fx.rate).replace('.', ',')) : ''}">${esc(E.formatFx ? E.formatFx(t.fx) : t.fx.currency)}</span>`);
+  if (t.tags && t.tags.length) bits.push(`<span data-wallet>${esc(t.tags.join(', '))}</span>`);
   return bits;
 }
 function txRow(t) {
@@ -1646,7 +1658,7 @@ function txRow(t) {
 }
 
 /* --- filters (session-remembered) --- */
-function emptyAdv() { return { from: '', to: '', min: '', max: '', types: [], accounts: [], cats: [], sources: [], inst: false, note: false, text: '' }; }
+function emptyAdv() { return { from: '', to: '', min: '', max: '', types: [], accounts: [], cats: [], sources: [], inst: false, note: false, fx: false, text: '' }; }
 function loadTxPrefs() {
   try { const j = JSON.parse(ss.get('ff-tx-prefs') || 'null'); if (j) { S.ui.adv = Object.assign(emptyAdv(), j.adv || {}); if (SORTS.some(s => s[0] === j.sort)) S.ui.sort = j.sort; if (j.filter) S.ui.filter = j.filter; if (typeof j.q === 'string') S.ui.q = j.q; } } catch (e) { /* ignore */ }
   if (!S.ui.adv) S.ui.adv = emptyAdv();
@@ -1658,7 +1670,7 @@ function advCount(a) {
   if (a.from || a.to) n++;
   if (a.min !== '' && a.min != null || a.max !== '' && a.max != null) n++;
   ['types', 'accounts', 'cats', 'sources'].forEach(k => { if ((a[k] || []).length) n++; });
-  if (a.inst) n++; if (a.note) n++; if ((a.text || '').trim()) n++;
+  if (a.inst) n++; if (a.note) n++; if (a.fx) n++; if ((a.text || '').trim()) n++;
   return n;
 }
 function applyAdv(list, a) {
@@ -1679,6 +1691,7 @@ function applyAdv(list, a) {
     if ((a.sources || []).length && !a.sources.includes(t.catSource || 'none')) return false;
     if (a.inst && !(t.installment && t.installment.n)) return false;
     if (a.note && !(t.note && String(t.note).trim())) return false;
+    if (a.fx && !isFxRow(t)) return false;
     if (text && !normU(t.rawDescription).includes(text) && !normU(t.merchant).includes(text)) return false;
     return true;
   });
@@ -1783,7 +1796,7 @@ function openFilters() {
       <button type="button" class="btn ghost sm" data-act="nc-open" data-p="flt" style="align-self:flex-start">+ Nova categoria</button>
       ${newCatForm('flt')}</div>
     <div class="field"><span class="lbl">Origem da categoria</span><div class="check-list">${SRC_FILTER.map(([k, v]) => chk('sources', k, (a.sources || []).includes(k), v)).join('')}</div></div>
-    <div class="check-list"><label class="check-chip"><input type="checkbox" id="f-inst" ${a.inst ? 'checked' : ''}>Só parceladas</label><label class="check-chip"><input type="checkbox" id="f-note" ${a.note ? 'checked' : ''}>Com nota</label></div>
+    <div class="check-list"><label class="check-chip"><input type="checkbox" id="f-inst" ${a.inst ? 'checked' : ''}>Só parceladas</label><label class="check-chip"><input type="checkbox" id="f-note" ${a.note ? 'checked' : ''}>Com nota</label><label class="check-chip"><input type="checkbox" id="f-fx" ${a.fx ? 'checked' : ''}>Moeda estrangeira</label></div>
     <div class="field"><label for="f-text">Texto na descrição</label><input type="search" id="f-text" value="${esc(a.text || '')}" placeholder="Ex.: PIX, UBER"></div>
     <div class="row end"><button class="btn" type="button" data-act="filters-clear">Limpar</button><button class="btn primary" type="button" data-act="filters-apply" id="f-apply">Aplicar</button></div>`;
   openSheet('<h2>Filtros</h2>', body, null, { kind: 'filters', label: 'Filtros' });
@@ -1794,7 +1807,7 @@ function readFilters() {
   const vals = name => $$(`[data-fchk="${name}"]`).filter(i => i.checked).map(i => i.value);
   return { from: from || '', to: to || '', min: ($('#f-min') || {}).value || '', max: ($('#f-max') || {}).value || '',
     types: vals('types'), accounts: vals('accounts'), cats: vals('cats'), sources: vals('sources'),
-    inst: !!($('#f-inst') || {}).checked, note: !!($('#f-note') || {}).checked, text: ($('#f-text') || {}).value || '' };
+    inst: !!($('#f-inst') || {}).checked, note: !!($('#f-note') || {}).checked, fx: !!($('#f-fx') || {}).checked, text: ($('#f-text') || {}).value || '' };
 }
 function presetRange(k) {
   const t = todayISO(), ym = t.slice(0, 7);
@@ -2133,7 +2146,7 @@ function triageUndo() {
 /* file pickers: some Android WebViews do not implement the file chooser, so the tap does nothing. Detected by UA up
    front, and at runtime (Android only): a tap on the picker that within 1.5 s neither hides/blurs the page nor fires
    change (nor a later cancel) counts as "picker did not open". The only effect is that the paste section opens (no text). */
-const FILE_ACCEPT = '.csv,.txt,.tsv,.xlsx,.xls,text/*,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream';
+const FILE_ACCEPT = '.csv,.txt,.tsv,.xlsx,.xls,.pdf,text/*,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream';
 const BACKUP_ACCEPT = '.json,application/json,text/*,application/octet-stream';
 const UA = navigator.userAgent || '';
 const IS_ANDROID = /Android/i.test(UA);
@@ -2178,13 +2191,13 @@ function tableFileKind(file, bytes) {
   const b = bytes || new Uint8Array(0);
   const zip = b[0] === 0x50 && b[1] === 0x4b; const ole = b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0;
   if (['xlsx', 'xls'].includes(ext) || zip || ole) return 'xlsx';
-  if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return 'PDF não é aceito; no app do banco, exporte como CSV ou XLSX';
+  if ((b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) || ext === 'pdf') return 'pdf';
   if (['csv', 'txt', 'tsv'].includes(ext)) return 'text';
   const head = Array.from(b.subarray(0, 2048)); const bin = head.filter(c => c === 0 || (c < 9) || (c > 13 && c < 32 && c !== 27)).length;
   if (head.length && bin / head.length < 0.02) return 'text';
-  return 'este tipo de arquivo não é aceito (use CSV, TXT, TSV, XLSX ou XLS)';
+  return 'este tipo de arquivo não é aceito (use PDF, CSV, TXT, TSV, XLSX ou XLS)';
 }
-function newImp(){ return { tab:'arquivo', step:1, accountId: defaultAccountId(), newAcc:{ name:'', type:'credit_card' }, paste:'', fileName:'', encoding:'', analysis:null, profile:null, matched:null, result:null, dedup:null, checksum:'', layoutName:'', ai:null, aiProblems:[], done:null, hol:null, importId:null, err:'', pasteOpen:false, reading:'', fromPaste:false, pasted:0 }; }
+function newImp(){ return { fxRates:{}, pdf:null, pdfPw:null, tab:'arquivo', step:1, accountId: defaultAccountId(), newAcc:{ name:'', type:'credit_card' }, paste:'', fileName:'', encoding:'', analysis:null, profile:null, matched:null, result:null, dedup:null, checksum:'', layoutName:'', ai:null, aiProblems:[], done:null, hol:null, importId:null, err:'', pasteOpen:false, reading:'', fromPaste:false, pasted:0 }; }
 function defaultAccountId(){ const a = (S.mode==='real' && S.real ? S.real.accounts : []).filter(a=>a.type!=='payslip'); return a.length ? a[0].id : '__new'; }
 function renderImport(){
   if(!S.imp) S.imp = newImp();
@@ -2213,7 +2226,7 @@ function renderStep1(b){
       <div class="field"><label for="imp-acc">Conta</label>${accountSelect('imp-acc', I.accountId)}</div>
       <div class="form-grid" ${I.accountId==='__new'?'':'hidden'} id="new-acc">
         <div class="field"><label for="imp-acc-name">Nome</label><input type="text" id="imp-acc-name" placeholder="Ex.: Nubank cartão" value="${esc(I.newAcc.name)}"></div>
-        <div class="field"><label for="imp-acc-type">Tipo</label><select id="imp-acc-type">${['credit_card','checking','savings','cash'].map(k=>`<option value="${k}" ${I.newAcc.type===k?'selected':''}>${ACC_TYPES[k]}</option>`).join('')}</select></div>
+        <div class="field"><label for="imp-acc-type">Tipo</label><select id="imp-acc-type">${NEW_ACC_TYPES.map(k=>`<option value="${k}" ${I.newAcc.type===k?'selected':''}>${ACC_TYPES[k]}</option>`).join('')}</select></div>
       </div>
     </div>
     <div class="card">
@@ -2221,9 +2234,14 @@ function renderStep1(b){
       <input type="file" id="imp-file" class="file-in" multiple accept="${FILE_ACCEPT}">
       <label class="drop" id="drop" for="imp-file">
         <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7 9l5-5 5 5M5 15v4h14v-4"/></svg>
-        <b>Escolher arquivos</b><span class="small muted">CSV, TXT, TSV, XLSX ou XLS do seu banco ou cartão — um ou vários (faturas e extratos de meses diferentes)</span><span class="xs faint drop-hint">No computador, também dá para arrastar os arquivos para cá.</span>
+        <b>Escolher arquivos</b><span class="small muted">PDF, CSV, TXT, TSV, XLSX ou XLS do seu banco, cartão ou vale (VA/VR) — um ou vários (faturas e extratos de meses diferentes)</span><span class="xs faint drop-hint">No computador, também dá para arrastar os arquivos para cá.</span>
       </label>
-      ${I.reading?`<p class="row small" id="imp-reading"><span class="spinner"></span> ${esc(I.reading)}</p>`:''}
+      ${I.reading?`<p class="row small" id="imp-reading"><span class="spinner"></span> <span id="imp-reading-t">${esc(I.reading)}</span></p>`:''}
+      ${I.pdfPw && !I.reading ? `<div class="pdf-pw" id="imp-pdf-pw-box"><b class="small">"${esc(I.pdfPw.file.name)}" tem senha</b>
+        <div class="field"><label for="imp-pdf-pw">Senha do PDF</label><input type="password" id="imp-pdf-pw" autocomplete="off" inputmode="text" spellcheck="false" ${I.pdfPw.wrong ? 'aria-invalid="true"' : ''}></div>
+        ${I.pdfPw.wrong ? '<p class="small out" id="imp-pdf-pw-err" role="alert">Senha incorreta. Confira e tente de novo.</p>' : ''}
+        <p class="xs muted">Muitos bancos usam os números do CPF (só os dígitos) ou parte deles. A senha só abre o arquivo aqui no navegador e não é guardada.</p>
+        <div class="row end"><button class="btn" type="button" data-act="imp-pdf-pw-cancel">Cancelar</button><button class="btn primary" type="button" data-act="imp-pdf-pw" id="imp-pdf-pw-go">Abrir PDF</button></div></div>` : ''}
       ${I.fileName&&!I.reading?`<p class="small muted">Último: ${esc(I.fileName)}</p>`:''}
       <details id="imp-paste-box" ${I.paste||I.pasteOpen||pickerBlocked()?'open':''}><summary>Ou cole o conteúdo do arquivo</summary>
         <div class="field" style="margin-top:10px"><label for="imp-paste">Abra o arquivo (ou o extrato no internet banking), copie tudo e cole aqui. Vários arquivos? Um de cada vez.</label><textarea id="imp-paste" spellcheck="false" autocomplete="off" placeholder="Data;Descrição;Valor&#10;05/09/2026;IFOOD *RESTAURANTE;-54,90">${esc(I.paste)}</textarea></div>
@@ -2249,19 +2267,130 @@ function commitNewAccount(){
   const id = addAccount(I.newAcc.name, I.newAcc.type);
   I.accountId = id; return id;
 }
-async function handleFile(file){
-  const I = S.imp; I.err = '';
+async function handleFile(file, password){
+  const I = S.imp; I.err = ''; I.pdfPw = null;
   if(!resolveAccount()){ renderImport(); return; }
   I.fileName = file.name; I.fromPaste = false;
   I.reading = 'Lendo arquivo…'; renderImport();
   try{
-    const r = await readFileAnalysis(file);
+    const r = await readFileAnalysis(file, { password, onPage: (i, n) => setReading('Lendo PDF… página ' + i + ' de ' + n) });
+    password = null;
     I.reading = '';
     if(!r.analysis || !Array.isArray(r.analysis.rows)) throw new Error('não reconheci uma tabela');
     I.encoding = r.encoding;
     startAnalysis(r.analysis);
-  }catch(e){ I.reading = ''; I.err = 'Não consegui abrir "'+file.name+'": '+(e.message||e)+'. Se for PDF, exporte como CSV ou XLSX no app do banco.'; renderImport(); }
+  }catch(e){
+    password = null; I.reading = '';
+    if(e && (e.code==='pdf_password' || e.code==='pdf_password_wrong')){ I.pdfPw = { file, wrong: e.code==='pdf_password_wrong' }; renderImport(); const pw = $('#imp-pdf-pw'); if(pw) pw.focus(); return; }
+    I.err = 'Não consegui abrir "'+file.name+'": '+fileErrMsg(e); renderImport();
+  }
 }
+function setReading(txt){ if(S.imp) S.imp.reading = txt; const el = $('#imp-reading-t'); if(el) el.textContent = txt; const b = $('#bf-busy-t'); if(b) b.textContent = txt; }
+/** pt-BR message for a file that could not be read (PDF error codes from FinEngine.readPdf) */
+function fileErrMsg(e){
+  const c = e && e.code;
+  if(c==='pdf_no_text') return 'este PDF é só imagem (foi digitalizado ou salvo como foto) e não tem texto para ler. Ainda não dá para importar PDFs assim: baixe o PDF original no app ou site do banco, ou exporte em CSV/XLSX.';
+  if(c==='pdf_password_wrong') return 'senha do PDF incorreta.';
+  if(c==='pdf_invalid') return 'o arquivo não parece um PDF válido (corrompido ou incompleto).';
+  if(c==='pdf_unavailable' || c==='pdf_load') return 'o leitor de PDF não carregou. Confira a conexão e tente de novo.';
+  return (e && e.message || String(e)) + '.';
+}
+/* ---------- v2.4b: PDF reader (pdf.js 3.11.174) ----------
+   Netlify build: same-origin copies in /vendor (CSP script-src 'self'; the parsing runs in a same-origin Web Worker).
+   claude.ai Artifact build: the pinned files from cdnjs (allow-listed), loaded only when a PDF is chosen; the worker file
+   is loaded as a plain <script> so globalThis.pdfjsWorker exists and pdf.js parses in this thread (no cross-origin worker). */
+const PDFJS_VER = '3.11.174';
+const PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/' + PDFJS_VER + '/';
+let _pdfjs = null;
+function loadScriptOnce(src, cross){
+  const have = Array.from(document.scripts).find(x => x.src === src);
+  if(have && have.dataset.loaded) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = src; el.async = true; if(cross) el.crossOrigin = 'anonymous';
+    el.addEventListener('load', () => { el.dataset.loaded = '1'; resolve(); }, { once: true });
+    el.addEventListener('error', () => { el.remove(); const e = new Error('não carregou ' + src); e.code = 'pdf_load'; reject(e); }, { once: true });
+    document.head.appendChild(el);
+  });
+}
+function loadPdfJs(){
+  if(_pdfjs) return _pdfjs;
+  _pdfjs = (async () => {
+    if(window.FINSTORE_BUILD === 'artifact'){
+      await loadScriptOnce(PDFJS_CDN + 'pdf.min.js', true);
+      await loadScriptOnce(PDFJS_CDN + 'pdf.worker.min.js', true);
+      if(!window.pdfjsWorker || !window.pdfjsWorker.WorkerMessageHandler){ const e = new Error('leitor de PDF incompleto'); e.code = 'pdf_load'; throw e; }
+    } else {
+      await loadScriptOnce(new URL('vendor/pdf.min.js', document.baseURI).href);
+      if(window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('vendor/pdf.worker.min.js', document.baseURI).href;
+    }
+    const lib = window.pdfjsLib;
+    if(!lib || typeof lib.getDocument !== 'function'){ const e = new Error('leitor de PDF não carregou'); e.code = 'pdf_load'; throw e; }
+    return lib;
+  })();
+  _pdfjs.catch(() => { _pdfjs = null; });
+  return _pdfjs;
+}
+/** settings.fxRates + the rates typed in this import (not saved yet) */
+function fxRatesAll(){
+  const base = clone((settingsObj().fxRates) || {}) || {};
+  const pend = (S.imp && S.imp.fxRates) || {};
+  for(const c of Object.keys(pend)) base[c] = Object.assign({}, base[c] || {}, pend[c]);
+  return base;
+}
+const brDate = iso => iso ? iso.split('-').reverse().join('/') : '—';
+/** the fields a PDF adds to the import record (also read by the update alerts: due date, closing, cycle) */
+function pdfImportFields(pdf){
+  if(!pdf || !pdf.meta) return {};
+  const m = pdf.meta; const o = { source: 'pdf', docKind: pdf.kind || null, pages: pdf.pages || null };
+  if(m.dueDate) o.dueDate = m.dueDate;
+  if(m.cycleStart && m.cycleEnd){ o.cycleStart = m.cycleStart; o.cycleEnd = m.cycleEnd; }
+  const close = m.cycleEnd ? addDaysISO(m.cycleEnd, 1) : m.closeDate;
+  if(pdf.kind === 'fatura' && close) o.closeDate = close;
+  if(m.total != null) o.statementTotal = m.total;
+  if(m.cardLast4) o.cardLast4 = m.cardLast4;
+  return o;
+}
+function addDaysISO(iso, k){ const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + k); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+/** after importing a PDF: a card with no closing/due day takes the ones printed on the fatura; a foreign-only file sets
+ *  the account currency. -> note for the summary or '' */
+function pdfAdoptAccount(accId, pdf, profile){
+  const a = (D().accounts || []).find(x => x.id === accId); if(!a) return '';
+  let note = '';
+  const f = pdfImportFields(pdf);
+  if(pdf && pdf.kind === 'fatura' && a.type === 'credit_card' && !a.closingDay && f.closeDate && f.dueDate){
+    a.closingDay = +f.closeDate.slice(8, 10); a.dueDay = +f.dueDate.slice(8, 10); a.updatedAt = nowISO();
+    note = 'Cartão configurado pela fatura: fecha dia ' + a.closingDay + ', vence dia ' + a.dueDay + '.';
+  }
+  const cur = profile && profile.currency && profile.currency !== 'BRL' ? profile.currency : null;
+  if(cur && a.currency !== cur){ a.currency = cur; a.updatedAt = nowISO(); }
+  return note;
+}
+function saveFxRates(){
+  const pend = (S.imp && S.imp.fxRates) || {};
+  if(!Object.keys(pend).length) return false;
+  const st = settingsObj(); st.fxRates = st.fxRates || {};
+  for(const c of Object.keys(pend)) st.fxRates[c] = Object.assign({}, st.fxRates[c] || {}, pend[c]);
+  st.updatedAt = nowISO(); S.imp.fxRates = {};
+  return true;
+}
+/** "Ignorado: resumo (12), ofertas de parcelamento (5)…" — the regions of the PDF that did not become rows */
+function pdfExcludedHTML(pdf, id){
+  const ex = (pdf && pdf.excluded) || [];
+  if(!ex.length) return '';
+  const total = ex.reduce((n, e) => n + e.count, 0);
+  return `<details class="pdf-ex" id="${id || 'pdf-ex'}"><summary>Ignorado: ${ex.map(e => esc(e.label) + ' (' + e.count + ')').join(', ')}</summary>
+    <p class="xs muted">${total} linha${total === 1 ? '' : 's'} do PDF não ${total === 1 ? 'virou lançamento' : 'viraram lançamentos'}: resumos, totais, saldos, ofertas, lançamentos futuros e cabeçalhos repetidos. Confira se nada de verdade ficou aqui.</p>
+    ${ex.map(e => `<div class="pdf-ex-g" data-reason="${esc(e.reason)}"><b class="small">${esc(e.label[0].toUpperCase() + e.label.slice(1))} · ${e.count}</b>${e.samples.map(x => `<div class="xs faint pdf-ex-l">${esc(x)}</div>`).join('')}${e.count > e.samples.length ? `<div class="xs faint">… e mais ${e.count - e.samples.length}</div>` : ''}</div>`).join('')}</details>`;
+}
+/** checksum of a PDF: the total the user confirms (pre-filled) vs the rows read (fatura: previous + debits − credits) */
+function pdfCheckRead(pdf, total){
+  const m = (pdf && pdf.meta) || {};
+  if(pdf && pdf.kind === 'fatura') return { read: (m.previousBalance || 0) - (total || 0), prev: m.previousBalance || 0 };
+  if(m.openingBalance != null) return { read: m.openingBalance + (total || 0), opening: m.openingBalance };
+  return null;
+}
+function moneyIn(c){ return E.formatBRL ? E.formatBRL(c).replace(/^R\$\s*/, '').replace(/^-R\$\s*/, '-') : String(c / 100); }
 function handlePaste(){
   const I = S.imp; I.err = ''; I.paste = ($('#imp-paste')||{}).value || '';
   if(!resolveAccount()){ renderImport(); return; }
@@ -2291,6 +2420,12 @@ function startAnalysis(analysis){
   const I = S.imp;
   if(!analysis || !Array.isArray(analysis.rows)){ I.err = I.err || 'Não reconheci uma tabela neste conteúdo.'; renderImport(); return; }
   I.analysis = analysis; I.ai = null; I.aiProblems = []; I.checksum = '';
+  I.pdf = analysis.source === 'pdf' ? analysis.pdf : null;
+  if(I.pdf){
+    const ck = I.pdf.checksum;
+    if(ck && ck.expected != null) I.checksum = moneyIn(ck.expected);
+    if(I.accountId === '__new' && I.pdf.accountType && !I.accTypeTouched) I.newAcc.type = I.pdf.accountType;
+  }
   I.importId = 'imp-'+Date.now().toString(36);
   const profiles = S.mode==='real' && S.real ? S.real.profiles : [];
   const m = profiles.length ? eng('matchProfile', analysis, profiles) : null;
@@ -2314,8 +2449,8 @@ function startAnalysis(analysis){
 function runPreview(){
   const I = S.imp; if(!I.analysis || !I.profile) return;
   const accId = I.accountId==='__new' || !I.accountId ? '__pending' : I.accountId;
-  const res = eng('applyProfile', I.analysis.rows, I.profile, { accountId:accId, importId:I.importId });
-  I.result = res || { transactions:[], errors:[], total:0 };
+  const res = eng('applyProfile', I.analysis.rows, I.profile, { accountId:accId, importId:I.importId, fxRates: fxRatesAll() });
+  I.result = res || { transactions:[], errors:[], total:0, needRates:[] };
   const existing = S.mode==='real' ? live() : [];
   const dd = existing.length ? eng('dedupe', existing, I.result.transactions) : null;
   I.dedup = dd || { fresh: I.result.transactions, duplicates: [] };
@@ -2327,7 +2462,8 @@ function renderStep2(b){
   const delimName = {';':'Ponto e vírgula ( ; )', ',':'Vírgula ( , )', '\t':'Tabulação', '|':'Barra ( | )'};
   const dateCol = (a.columns||[]).find(c=>c.role==='date');
   const oc = a.overallConfidence!=null ? a.overallConfidence : 1;
-  const prompt = (FEATURES.ai && oc<0.7 && S.sample) ? eng('buildAIPrompt', a) : null;
+  const prompt = (FEATURES.ai && oc<0.7 && S.sample && !I.pdf) ? eng('buildAIPrompt', a) : null;
+  if(I.pdf){ renderStep2Pdf(b, oc); return; }
   b.innerHTML = `
     ${I.matched?`<div class="banner info"><div><b>Layout reconhecido: ${esc(I.matched.name)}</b>. Pule direto para a conferência.</div></div>`:''}
     <div class="card">
@@ -2355,6 +2491,34 @@ function renderStep2(b){
     </div>`:''}
     <div class="row end"><button class="btn" type="button" data-act="imp-back">${I.batchKey?'Voltar à lista':'Voltar'}</button><button class="btn primary" type="button" data-act="imp-step" data-s="3">Conferir prévia</button></div>`;
   if(!FEATURES.ai || !S.sample) $$('[data-ai-btn]').forEach(x=>x.closest('.row').hidden = true);
+}
+/** step 2 for a PDF: what the layout analysis found (statement kind, dates, totals, pages) + what it left out */
+function renderStep2Pdf(b, oc){
+  const I = S.imp; const P = I.pdf; const m = P.meta || {};
+  const ck = P.checksum;
+  const tot = P.kind === 'fatura' ? (m.total != null ? ['Total da fatura', brl(m.total)] : null) : (m.closingBalance != null ? ['Saldo no PDF', brl(m.closingBalance)] : null);
+  const chips = [
+    ['Tipo', KIND_LBL2[P.kind] || 'Não identificado'],
+    ['Páginas', String(P.pages)],
+    ['Lançamentos', String(P.records.length)],
+    m.dueDate ? ['Vencimento', brDate(m.dueDate)] : null,
+    m.cycleStart ? [P.kind === 'fatura' ? 'Compras do ciclo' : 'Período', brDate(m.cycleStart) + ' a ' + brDate(m.cycleEnd)] : null,
+    m.issueDate ? ['Emissão', brDate(m.issueDate)] : null,
+    tot,
+    m.cardLast4 ? ['Cartão', 'final ' + m.cardLast4] : null,
+    P.currency && P.currency !== 'BRL' ? ['Moeda', P.currency + ' (conta em moeda estrangeira)'] : null,
+    ck ? ['Conferência', ck.ok ? '✓ total bate' : 'diferença de ' + brl(Math.abs(ck.diff))] : null
+  ].filter(Boolean);
+  b.innerHTML = `
+    ${I.matched?`<div class="banner info"><div><b>Layout reconhecido: ${esc(I.matched.name)}</b>. Pule direto para a conferência.</div></div>`:''}
+    <div class="card" id="pdf-detect">
+      <div class="card-h"><h3>O que encontramos em ${esc(I.fileName)}</h3><span class="tag ${oc>=0.8?'ok':oc>=0.7?'warn':'err'}">Confiança ${Math.round(oc*100)}%</span></div>
+      <p class="small muted">PDF lido aqui no navegador: as linhas foram remontadas pela posição do texto (data, descrição, valor, parcela, seção).</p>
+      <div class="det-grid">${chips.map(([k, v]) => `<div class="det"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join('')}</div>
+      ${(I.analysis.warnings||[]).length?`<div class="banner"><div>${I.analysis.warnings.map(esc).join('<br>')}</div></div>`:''}
+      ${pdfExcludedHTML(P, 'pdf-ex2')}
+    </div>
+    <div class="row end"><button class="btn" type="button" data-act="imp-back">${I.batchKey?'Voltar à lista':'Voltar'}</button><button class="btn primary" type="button" data-act="imp-step" data-s="3">Conferir prévia</button></div>`;
 }
 async function runAIProfile(){
   const I = S.imp; const sample = FEATURES.ai ? S.sample : null;
@@ -2399,33 +2563,45 @@ function renderStep3(b){
   const errBy = {}; (R.errors||[]).forEach(e=>errBy[e.rowIndex]=e);
   const skipBy = {}; (a.skippedRows||[]).forEach(s=>skipBy[s.index]=s);
   const start = a.dataStart||0, end = Math.min(a.rows.length, a.dataEnd!=null ? a.dataEnd+1 : a.rows.length); // engine dataEnd is inclusive
-  const rowsIdx = []; for(let i=start;i<end && rowsIdx.length<15;i++) rowsIdx.push(i);
+  const maxRows = I.pdf ? 80 : 15;
+  const rowsIdx = []; for(let i=start;i<end && rowsIdx.length<maxRows;i++) rowsIdx.push(i);
   // make sure error rows are visible even past the first 15
   (R.errors||[]).forEach(e=>{ if(!rowsIdx.includes(e.rowIndex) && rowsIdx.length<25 && e.rowIndex>=0) rowsIdx.push(e.rowIndex); });
   rowsIdx.sort((x,y)=>x-y);
   const header = a.headerRowIndex!=null ? a.rows[a.headerRowIndex]||[] : [];
-  const roleOpts = sel => Object.entries(ROLE_LBL).map(([k,v])=>`<option value="${k}" ${sel===k?'selected':''}>${v}</option>`).join('');
+  const curLbl = P.currency && P.currency !== 'BRL' ? 'Valor (' + P.currency + ')' : null;
+  const roleOpts = sel => Object.entries(ROLE_LBL).map(([k,v])=>`<option value="${k}" ${sel===k?'selected':''}>${k==='amount' && curLbl ? curLbl : v}</option>`).join('');
   const nDup = (I.dedup.duplicates||[]).length, nErr = (R.errors||[]).length, nFresh = (I.dedup.fresh||[]).length, nAll = (R.transactions||[]).length;
   const ck = I.checksum ? parseMoney(I.checksum) : null;
   let ckHtml = '';
-  if(ck!=null){
+  const pck = I.pdf ? pdfCheckRead(I.pdf, R.total) : null;
+  if(ck!=null && pck){
+    const diff = Math.abs(pck.read - ck);
+    const parts = I.pdf.kind === 'fatura'
+      ? `${pck.prev ? 'Fatura anterior ' + brl(pck.prev) + ' + ' : ''}lançamentos ${brl(-(R.transactions||[]).filter(t=>t.amount<0).reduce((x,t)=>x+t.amount,0))} − pagamentos e créditos ${brl((R.transactions||[]).filter(t=>t.amount>0).reduce((x,t)=>x+t.amount,0))} = ${brl(pck.read)}`
+      : `Saldo anterior ${brl(pck.opening)} + movimento ${brl(R.total||0)} = ${brl(pck.read)}`;
+    ckHtml = (diff<=1 ? `<span class="check-res in" id="pdf-ck-ok">✓ Bate com o PDF (${brl(ck)})</span>` : `<span class="check-res out" id="pdf-ck-diff">Diferença de ${brl(diff)}</span>`) + `<span class="xs muted" id="pdf-ck-parts">${esc(parts)}</span>`;
+  } else if(ck!=null){
     const diff = Math.abs(Math.abs(R.total||0) - Math.abs(ck));
     ckHtml = diff<=1 ? `<span class="check-res in">✓ Bate com o arquivo (${brl(Math.abs(R.total||0))})</span>`
       : `<span class="check-res out">Diferença de ${brl(diff)}</span><span class="small muted">Lido: ${brl(Math.abs(R.total||0))}. Confira as linhas em vermelho, o formato numérico e se há lançamentos fora do período.</span>`;
   }
   const accT = I.accountId==='__new' ? I.newAcc.type : accType(I.accountId);
-  const guess = eng('guessAccountType', a, R.transactions);
-  const mismatch = guess && accT && accT!=='payslip' && ((guess==='checking' && accT==='credit_card') || (guess==='credit_card' && (accT==='checking'||accT==='savings')));
+  const guess = I.pdf ? (I.pdf.kind==='fatura' ? 'credit_card' : I.pdf.kind==='beneficio' ? 'benefit' : I.pdf.kind==='extrato' ? 'checking' : null) : eng('guessAccountType', a, R.transactions);
+  const mismatch = guess && accT && accT!=='payslip' && (I.pdf ? kindMismatch(I.pdf.kind, accT) : ((guess==='checking' && accT==='credit_card') || (guess==='credit_card' && (accT==='checking'||accT==='savings'))));
+  const fxNeed = fxNeedList(R, P);
   const nInst = (R.transactions||[]).filter(t=>t.installment && t.originalDate).length;
   const nTime = (R.transactions||[]).filter(t=>t.time).length;
   b.innerHTML = `
-    ${mismatch?`<div class="banner err" id="acc-mismatch"><div class="grow"><b>Conta parece errada.</b> Este arquivo parece ${guess==='checking'?'um <b>extrato de conta corrente</b> (tem saldo, Pix, TED ou rendimentos)':'uma <b>fatura de cartão</b> (compras positivas, parcelas)'}, mas a conta escolhida é <b>${esc(ACC_TYPES[accT]||accT)}</b>. Isso muda o tipo dos lançamentos (entradas viram estornos).</div><button class="btn sm" type="button" data-act="imp-back">Trocar conta</button></div>`:''}
+    ${mismatch?`<div class="banner err" id="acc-mismatch"><div class="grow"><b>Conta parece errada.</b> Este arquivo parece ${guess==='benefit'?'um <b>extrato de cartão benefício</b> (VA/VR)':guess==='checking'?'um <b>extrato de conta corrente</b> (tem saldo, Pix, TED ou rendimentos)':'uma <b>fatura de cartão</b> (compras positivas, parcelas)'}, mas a conta escolhida é <b>${esc(ACC_TYPES[accT]||accT)}</b>. Isso muda o tipo dos lançamentos (entradas viram estornos).</div><button class="btn sm" type="button" data-act="imp-back">Trocar conta</button></div>`:''}
     ${(I.upgraded||[]).length?`<div class="banner info" id="layout-upgraded"><div>Layout salvo <b>${esc(I.matched?I.matched.name:'')}</b> atualizado: agora lê ${I.upgraded.map(x=>'a coluna <b>'+esc(x)+'</b>').join(' e ')}.</div></div>`:''}
     ${nInst?`<div class="banner info"><div><b>${nInst} parcela${nInst>1?'s':''}</b> lançada${nInst>1?'s':''} no mês da parcela (data da compra + parcelas já pagas). A data original da compra fica guardada.</div></div>`:''}
     <div class="card">
       <div class="card-h"><h3>Confira a leitura</h3>${I.matched?`<span class="tag ok">${esc(I.matched.name)}</span>`:''}</div>
-      <p class="small muted">Se uma coluna estiver errada, troque o papel dela no cabeçalho. A prévia se atualiza na hora.</p>
-      <div class="row">
+      <p class="small muted">${I.pdf ? 'Tabela montada a partir do PDF (com a seção de cada linha). Se uma coluna estiver errada, troque o papel dela no cabeçalho.' : 'Se uma coluna estiver errada, troque o papel dela no cabeçalho. A prévia se atualiza na hora.'}</p>
+      ${fxNeed.length ? fxRatesHTML(fxNeed, P) : ''}
+      ${(R.transactions||[]).some(t=>t.fx && t.fx.source!=='manual') ? `<p class="xs muted" id="imp-fx-note">${(R.transactions||[]).filter(t=>t.fx).length} lançamento(s) em moeda estrangeira: o valor em R$ é o cobrado; o valor original fica guardado (${esc([...new Set((R.transactions||[]).filter(t=>t.fx).map(t=>t.fx.currency))].join(', '))}).</p>` : ''}
+      <div class="row" ${I.pdf ? 'hidden' : ''}>
         <div class="seg" role="group" aria-label="Formato numérico"><button type="button" data-act="imp-num" data-v="br" aria-pressed="${P.numberFormat!=='us'}">1.234,56</button><button type="button" data-act="imp-num" data-v="us" aria-pressed="${P.numberFormat==='us'}">1,234.56</button></div>
         <select id="imp-sign" aria-label="Convenção de sinal" style="width:auto;flex:1;min-width:180px">${Object.entries(SIGN_LBL).map(([k,v])=>`<option value="${k}" ${P.signConvention===k?'selected':''}>${v}</option>`).join('')}</select>
       </div>
@@ -2437,10 +2613,12 @@ function renderStep3(b){
             <td class="num">${pp.date?esc(pp.date.split('-').reverse().join('/')):'—'}</td><td class="num ${pp.amt>0?'in':pp.amt<0?'out':''}">${pp.amt!=null?brl(pp.amt):'—'}</td>
             <td>${er?esc(er.reason):sk?esc('Ignorada: '+sk.reason):'ok'}</td></tr>`; }).join('')}</tbody></table></div>
       ${nTime?`<p class="xs muted">Horário da compra encontrado em ${nTime} lançamento${nTime>1?'s':''}.</p>`:''}
+      ${I.pdf && end - start > rowsIdx.length ? `<p class="xs muted">Mostrando ${rowsIdx.length} de ${end - start} linhas.</p>` : ''}
+      ${I.pdf ? pdfExcludedHTML(I.pdf, 'pdf-ex3') : ''}
       <p class="small"><b class="num">${nAll}</b> lançamento${nAll===1?'':'s'} · <b class="num">${nDup}</b> duplicado${nDup===1?'':'s'} ignorado${nDup===1?'':'s'} · <b class="num ${nErr?'out':''}">${nErr}</b> com erro</p>
       ${nErr?`<details><summary>Ver ${nErr} linha${nErr>1?'s':''} com erro</summary><div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">${R.errors.map(e=>`<div class="small"><span class="tag err">linha ${e.rowIndex+1}</span> ${esc(e.reason)}<div class="xs faint" style="font-family:ui-monospace,Menlo,monospace;word-break:break-all">${esc(Array.isArray(e.raw)?e.raw.join(' | '):e.raw)}</div></div>`).join('')}</div></details>`:''}
       <div class="check-box">
-        <label class="lbl" for="imp-check">Total no seu extrato/fatura</label>
+        <label class="lbl" for="imp-check">${I.pdf && I.pdf.kind==='fatura' ? 'Total da fatura (lido do PDF; confira)' : I.pdf && pck ? 'Saldo final do PDF (confira)' : 'Total no seu extrato/fatura'}</label>
         <input type="text" inputmode="decimal" id="imp-check" class="money-in" placeholder="Ex.: 4.123,45" value="${esc(I.checksum)}">
         <div id="check-res" style="display:flex;flex-direction:column;gap:2px">${ckHtml || '<span class="small muted">Digite o total impresso no arquivo para conferir se nada ficou de fora. Soma lida: <b class="money">'+brl(Math.abs(R.total||0))+'</b></span>'}</div>
       </div>
@@ -2448,6 +2626,22 @@ function renderStep3(b){
     ${I.batchKey ? `<div class="card"><div class="field"><label for="imp-layout">Salvar layout como…</label><input type="text" id="imp-layout" placeholder="Ex.: Fatura XP" value="${esc(I.layoutName||'')}"></div>
       <div class="row end"><button class="btn" type="button" data-act="imp-step" data-s="2">Voltar</button><button class="btn primary" type="button" data-act="imp-batch-save" id="imp-batch-save">Salvar e voltar à lista</button></div></div>`
     : `<div class="row end"><button class="btn" type="button" data-act="imp-step" data-s="2">Voltar</button><button class="btn primary" type="button" data-act="imp-step" data-s="4" ${nFresh?'':'disabled'}>Continuar com ${nFresh}</button></div>`}`;
+}
+/** currencies × months that need a rate typed by the user (foreign-only files) + the ones already in use */
+function fxNeedList(R, P){
+  const out = []; const seen = new Set();
+  const add = (cur, ym, need) => { const k = cur + '|' + ym; if(seen.has(k)) return; seen.add(k); out.push({ key:k, currency:cur, ym, need }); };
+  (R.needRates||[]).forEach(n => add(n.currency, n.ym, true));
+  (R.transactions||[]).forEach(t => { if(t.fx && t.fx.source==='manual') add(t.fx.currency, ymOf(t.date), false); });
+  return out.sort((a,b)=>a.key.localeCompare(b.key));
+}
+function fxRatesHTML(list){
+  const all = fxRatesAll();
+  return `<div class="fx-rates" id="imp-fx-rates"><b class="small">Conta em moeda estrangeira: informe a cotação de cada mês</b>
+    <p class="xs muted">Quantos reais valia 1 unidade da moeda (ex.: 5,40). Sem internet para buscar cotações: use a do seu banco ou do dia da fatura. Dá para mudar depois em Ajustes → Cotações.</p>
+    <div class="fx-grid">${list.map(n => { const cur = all[n.currency] && all[n.currency][n.ym]; const prev = E.fxRateFor ? E.fxRateFor(all, n.currency, n.ym) : null;
+      return `<div class="field"><label for="fx-${esc(n.key.replace('|','-'))}">${esc(n.currency)} em ${esc(fmtYm(n.ym))}</label><input type="text" inputmode="decimal" id="fx-${esc(n.key.replace('|','-'))}" data-fxrate="${esc(n.key)}" value="${cur ? esc(String(cur).replace('.', ',')) : ''}" placeholder="${prev ? esc(String(prev.rate).replace('.', ',')) : 'ex.: 5,40'}" ${n.need && !cur ? 'aria-invalid="true"' : ''}></div>`; }).join('')}</div>
+    ${list.some(n=>n.need) ? `<p class="small out" id="imp-fx-missing">${list.filter(n=>n.need).length} mês(es) sem cotação: esses lançamentos ainda não entram.</p>` : ''}</div>`;
 }
 function setColumnRole(col, role){
   const P = S.imp.profile; const cols = Object.assign({}, P.columns||{});
@@ -2465,7 +2659,7 @@ function renderStep4(b){
   b.innerHTML = `<div class="card">
       <h3>Salvar layout</h3>
       <p class="small muted">Da próxima vez que você enviar um arquivo com este formato, ele será reconhecido e a importação vai direto para a conferência.</p>
-      <div class="field"><label for="imp-layout">Salvar layout como…</label><input type="text" id="imp-layout" placeholder="Ex.: Fatura Nubank CSV" value="${esc(I.layoutName || (I.matched?I.matched.name:''))}"></div>
+      <div class="field"><label for="imp-layout">Salvar layout como…</label><input type="text" id="imp-layout" placeholder="Ex.: Fatura Nubank CSV" value="${esc(I.layoutName || (I.matched?I.matched.name:'') || (I.pdf && I.profile ? I.profile.name : ''))}"></div>
     </div>
     <div class="card"><p><b class="num">${nFresh}</b> lançamentos novos vão para <b>${esc(accLabel)}</b>.</p>
       ${S.mode==='example'?'<p class="small muted">Os dados de exemplo serão substituídos pelos seus.</p>':''}
@@ -2496,9 +2690,16 @@ function commitImport(){
   const dts = added.map(t=>t.date).sort();
   S.real.imports[I.importId] = { id:I.importId, fileName:I.fileName||'arquivo', at:nowISO(), updatedAt:nowISO(), accountId:accId, profileId, count:added.length, total:added.reduce((s,t)=>s+t.amount,0),
     from: dts[0]||null, to: dts[dts.length-1]||null, duplicates:(I.dedup.duplicates||[]).length, hasBalance: (I.result.transactions||[]).some(t=>t.balance!=null), kindGuess: eng('guessAccountType', I.analysis, I.result.transactions) || null };
+  let pdfNote = '';
+  if(I.pdf){
+    const f = pdfImportFields(I.pdf); Object.assign(S.real.imports[I.importId], f);
+    if(f.cycleStart){ S.real.imports[I.importId].from = f.cycleStart; S.real.imports[I.importId].to = f.cycleEnd; }
+  }
+  pdfNote = pdfAdoptAccount(accId, I.pdf, I.profile);
+  if(saveFxRates()) metaN.push('settings');
   const auto = added.filter(t=>t.categoryId).length;
   const tri = added.filter(isUncat).length;
-  I.done = { imported: added.length, auto, triage: tri, dup:(I.dedup.duplicates||[]).length, err:(I.result.errors||[]).length, importId:I.importId };
+  I.done = { imported: added.length, auto, triage: tri, dup:(I.dedup.duplicates||[]).length, err:(I.result.errors||[]).length, importId:I.importId, note: pdfNote };
   const months = added.map(t=>ymOf(t.date)).sort(); if(months.length) S.ui.month = months[months.length-1];
   commit({ meta: metaN });
 }
@@ -2510,17 +2711,27 @@ function renderImportDone(b){
     <div class="result-big"><span class="num">${d.imported}</span> importados</div>
     <p><b class="num in">${d.auto}</b> categorizados automaticamente · ${left?`<b class="num out" id="imp-left">${left}</b> para triagem`:'<b class="in" id="imp-left">tudo classificado ✓</b>'}</p>
     ${d.dup||d.err?`<p class="small muted">${d.dup} duplicado${d.dup===1?'':'s'} ignorado${d.dup===1?'':'s'}${d.err?` · ${d.err} linha${d.err>1?'s':''} com erro não importada${d.err>1?'s':''}`:''}</p>`:''}
+    ${d.note?`<p class="small" id="imp-done-note">${esc(d.note)}</p>`:''}
     <div class="row">${left?'<button class="btn primary" type="button" data-act="triage">Classificar agora</button>':''}<button class="btn" type="button" data-act="goto" data-tab="painel">Ver painel</button>${S.imp.fromPaste?'<button class="btn" type="button" data-act="imp-paste-again" id="imp-paste-again">Colar outro arquivo</button>':''}<button class="btn ghost" type="button" data-act="imp-reset">Importar outro</button></div></div>`;
 }
 
 /* ================= v2.2: several files at once (batch) ================= */
-const KIND_LBL2 = { fatura: 'Fatura de cartão', extrato: 'Extrato bancário' };
-const kindMismatch = (kind, type) => (kind === 'extrato' && type === 'credit_card') || (kind === 'fatura' && (type === 'checking' || type === 'savings'));
-const kindAccType = kind => kind === 'fatura' ? 'credit_card' : 'checking';
+const KIND_LBL2 = { fatura: 'Fatura de cartão', extrato: 'Extrato bancário', beneficio: 'Extrato de benefício (VA/VR)' };
+const kindMismatch = (kind, type) => ((kind === 'extrato' || kind === 'beneficio') && type === 'credit_card') || (kind === 'fatura' && (type === 'checking' || type === 'savings' || type === 'benefit'));
+const kindAccType = kind => kind === 'fatura' ? 'credit_card' : kind === 'beneficio' ? 'benefit' : 'checking';
 /** reads one file into a table analysis (CSV/TXT/TSV text or the first sheet of an XLSX/XLS) */
-async function readFileAnalysis(file) {
+async function readFileAnalysis(file, opts) {
+  opts = opts || {};
   const buf = await readBytes(file);
   const kind = tableFileKind(file, buf);
+  if (kind === 'pdf') {
+    // v2.4b: PDF statements — text with positions (pdf.js) → lines → sections/records (FinEngine.analyzePdf)
+    const lib = await loadPdfJs();
+    const res = await E.readPdf(lib, buf, { password: opts.password, onPage: opts.onPage });
+    const a = eng('analyzePdf', res, { fileName: file.name });
+    if (!a) throw new Error('não consegui montar a tabela do PDF');
+    return { encoding: 'PDF', analysis: a };
+  }
   if (kind !== 'xlsx' && kind !== 'text') throw new Error(kind);
   if (kind === 'xlsx') {
     const XLSX = await loadXLSX();
@@ -2545,17 +2756,8 @@ async function handleFiles(list) {
   const added = [];
   for (const f of files) {
     const it = { key: 'bf' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: f.name, checksum: '', ov: null, sug: null, configured: false, layoutName: '' };
-    try {
-      const r = await readFileAnalysis(f);
-      if (!r.analysis || !Array.isArray(r.analysis.rows)) throw new Error('não reconheci uma tabela');
-      it.encoding = r.encoding; it.analysis = r.analysis;
-      const profiles = S.mode === 'real' && S.real ? S.real.profiles : [];
-      const m = profiles.length ? eng('matchProfile', r.analysis, profiles) : null;
-      it.matched = m || null;
-      it.profile = m ? clone(m) : eng('profileFromAnalysis', r.analysis);
-      batchDetectKind(it);
-      it.sug = suggestAccount(it);
-    } catch (e) { it.err = 'Não consegui abrir: ' + (e && e.message || e) + '. Se for PDF, exporte como CSV ou XLSX no app do banco.'; }
+    B.busyText = 'Lendo ' + f.name + '…'; setReading(B.busyText);
+    await bfRead(it, f, null);
     it.importId = 'imp-' + Date.now().toString(36) + '-' + B.items.length;
     B.items.push(it); added.push(it);
   }
@@ -2565,7 +2767,44 @@ async function handleFiles(list) {
   batchPreview();
   renderImport();
 }
+/** reads one batch file (CSV/XLSX/PDF) into the item; a PDF with a password waits for it (it.pw) */
+async function bfRead(it, f, password) {
+  it.err = null; it.pw = null; it.file = null;
+  try {
+    const r = await readFileAnalysis(f, { password, onPage: (i, n) => setReading('Lendo PDF ' + f.name + '… página ' + i + ' de ' + n) });
+    password = null;
+    if (!r.analysis || !Array.isArray(r.analysis.rows)) throw new Error('não reconheci uma tabela');
+    it.encoding = r.encoding; it.analysis = r.analysis;
+    const profiles = S.mode === 'real' && S.real ? S.real.profiles : [];
+    const m = profiles.length ? eng('matchProfile', r.analysis, profiles) : null;
+    it.matched = m || null;
+    it.profile = m ? clone(m) : eng('profileFromAnalysis', r.analysis);
+    if (r.analysis.source === 'pdf') {
+      it.pdf = r.analysis.pdf;
+      // a PDF needs no column setup: the reconstructed table is ready (the user can still "Revisar leitura")
+      if (!m && it.pdf.records.length) { it.configured = true; it.layoutName = it.profile.name; }
+      if (it.pdf.checksum && it.pdf.checksum.expected != null && !it.checksum) it.checksum = moneyIn(it.pdf.checksum.expected);
+    }
+    batchDetectKind(it);
+    it.sug = suggestAccount(it);
+  } catch (e) {
+    password = null;
+    if (e && (e.code === 'pdf_password' || e.code === 'pdf_password_wrong')) { it.pw = { wrong: e.code === 'pdf_password_wrong' }; it.file = f; return; }
+    it.err = 'Não consegui abrir: ' + fileErrMsg(e);
+  }
+}
+async function bfPassword(key) {
+  const it = bfItem(key); if (!it || !it.file) return;
+  const inp = $('#bf-pw-' + CSS.escape(key)); const pw = inp ? inp.value : '';
+  if (inp) inp.value = '';
+  if (!pw) { toast('Digite a senha do PDF.', true); if (inp) inp.focus(); return; }
+  const B = S.imp.batch; B.busy = true; renderImport();
+  await bfRead(it, it.file, pw);
+  B.busy = false; bfAuto(B, it); bfInitShared(B); bfRefresh();
+  if (it.pw) { const n = $('#bf-pw-' + CSS.escape(key)); if (n) n.focus(); }
+}
 function batchDetectKind(it) {
+  if (it.pdf && it.pdf.kind) { it.kind = it.pdf.kind; return; }
   if (!it.profile || !it.analysis) { it.kind = null; return; }
   const r = eng('applyProfile', it.analysis.rows, it.profile, { accountId: '__kind', importId: '__kind' }) || { transactions: [] };
   let k = eng('importKind', r.transactions, null) || null;
@@ -2704,7 +2943,7 @@ function bfFormHTML() {
   const F = S.imp.batch.form; if (!F) return '';
   return `<div class="newcat bf-newacc" id="bf-newacc" data-target="${esc(F.target)}"><div class="form-grid">
       <div class="field"><label for="bf-new-name">Nome da conta nova</label><input type="text" id="bf-new-name" value="${esc(F.name)}" autocomplete="off" placeholder="${F.type === 'credit_card' ? 'Ex.: Cartão XP' : 'Ex.: Conta XP'}"></div>
-      <div class="field"><label for="bf-new-type">Tipo</label><select id="bf-new-type">${['credit_card', 'checking', 'savings', 'cash'].map(k => `<option value="${k}" ${F.type === k ? 'selected' : ''}>${ACC_TYPES[k]}</option>`).join('')}</select></div></div>
+      <div class="field"><label for="bf-new-type">Tipo</label><select id="bf-new-type">${NEW_ACC_TYPES.map(k => `<option value="${k}" ${F.type === k ? 'selected' : ''}>${ACC_TYPES[k]}</option>`).join('')}</select></div></div>
     <p class="xs muted">Criada uma vez só: fica disponível para todos os arquivos desta lista.</p>
     <div class="row end"><button class="btn sm" type="button" data-act="bf-new-cancel">Cancelar</button><button class="btn sm primary" type="button" data-act="bf-new-create" id="bf-new-create">Criar conta</button></div></div>`;
 }
@@ -2714,18 +2953,21 @@ function batchPreview() {
   const items = B.items.filter(it => it.profile && it.analysis && !it.err);
   const pseudo = (B.newAccs || []).map(a => ({ id: a.id, name: a.name, type: a.type }));
   const c = Object.assign(ctx(), { accounts: (D().accounts || []).concat(pseudo) });
-  const res = eng('importBatch', S.mode === 'real' ? live() : [], items.map(it => ({ rows: it.analysis.rows, profile: it.profile, accountId: bfAcc(it) || '__pending:' + it.key, importId: 'pv-' + it.key, name: it.name })), c);
+  const fxr = fxRatesAll();
+  const res = eng('importBatch', S.mode === 'real' ? live() : [], items.map(it => ({ rows: it.analysis.rows, profile: it.profile, accountId: bfAcc(it) || '__pending:' + it.key, importId: 'pv-' + it.key, name: it.name, applyOpts: { fxRates: fxr } })), c);
   const by = new Map(((res && res.results) || []).map(r => [r.importId, r]));
   B.order = ((res && res.results) || []).map(r => r.importId.slice(3));
   for (const it of B.items) {
     const r = by.get('pv-' + it.key);
-    it.preview = r ? { count: r.count, fresh: r.addedIds.length, dups: r.duplicates.length, errors: r.errors.length, from: r.from, to: r.to, total: r.total } : null;
+    it.preview = r ? { count: r.count, fresh: r.addedIds.length, dups: r.duplicates.length, errors: r.errors.length, from: r.from, to: r.to, total: r.total, needRates: r.errors.filter(e => e.needRate).length } : null;
   }
 }
 const fmtRange = (a, b) => !a ? '—' : a.slice(0, 4) === (b || a).slice(0, 4) ? isoToDM(a) + ' – ' + isoToBR(b || a) : isoToBR(a) + ' – ' + isoToBR(b);
 function bfCheckHTML(it) {
   const ck = it.checksum ? parseMoney(it.checksum) : null;
   if (ck == null || !it.preview) return '';
+  const pck = it.pdf ? pdfCheckRead(it.pdf, it.preview.total) : null;
+  if (pck) { const d = Math.abs(pck.read - ck); return d <= 1 ? `<span class="check-res in">✓ Bate com o PDF (${brl(ck)})</span>` : `<span class="check-res out">Diferença de ${brl(d)}</span><span class="xs muted">Lido: ${brl(pck.read)}</span>`; }
   const diff = Math.abs(Math.abs(it.preview.total || 0) - Math.abs(ck));
   return diff <= 1 ? `<span class="check-res in">✓ Bate (${brl(Math.abs(it.preview.total || 0))})</span>` : `<span class="check-res out">Diferença de ${brl(diff)}</span><span class="xs muted">Lido: ${brl(Math.abs(it.preview.total || 0))}</span>`;
 }
@@ -2760,8 +3002,13 @@ function bfRowHTML(it) {
       <button class="btn ghost sm" type="button" data-act="bf-own" data-key="${k}" id="bf-own-${k}">Alterar só este</button></div>`;
   return `<div class="bf${mis ? ' bad' : ''}" data-key="${k}">
     <div class="bf-top"><span class="nm">${esc(it.name)}</span><button class="icon-btn" type="button" data-act="bf-remove" data-key="${k}" aria-label="Remover da lista" title="Remover da lista"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
-    ${it.err ? `<div class="banner err"><div>${esc(it.err)}</div></div>` : `
-    <div class="bf-tags">${layoutTag}${kindTag}</div>
+    ${it.pw ? `<div class="pdf-pw bf-pw" data-pw="${k}"><b class="small">PDF com senha</b>
+      <div class="field"><label for="bf-pw-${k}">Senha do PDF</label><input type="password" id="bf-pw-${k}" data-bfpw="${k}" autocomplete="off" spellcheck="false" ${it.pw.wrong ? 'aria-invalid="true"' : ''}></div>
+      ${it.pw.wrong ? '<p class="small out" role="alert">Senha incorreta. Confira e tente de novo.</p>' : ''}<p class="xs muted">Muitos bancos usam os dígitos do CPF. A senha não é guardada.</p>
+      <div class="row end"><button class="btn sm primary" type="button" data-act="bf-pw" data-key="${k}" id="bf-pw-go-${k}">Abrir PDF</button></div></div>`
+    : it.err ? `<div class="banner err"><div>${esc(it.err)}</div></div>` : `
+    <div class="bf-tags">${layoutTag}${kindTag}${it.pdf ? `<span class="tag" data-pdf>PDF · ${it.pdf.pages} pág.</span>` : ''}${p && p.needRates ? `<span class="tag warn" data-needrate>Falta cotação</span>` : ''}</div>
+    ${it.pdf ? pdfExcludedHTML(it.pdf, 'bf-ex-' + k) : ''}
     <div class="bf-stats small" data-stats="${k}">${p ? `${esc(fmtRange(p.from, p.to))} · <b class="num">${p.count}</b> linha${p.count === 1 ? '' : 's'} · <b class="num ${p.errors ? 'out' : ''}">${p.errors}</b> erro${p.errors === 1 ? '' : 's'} · <b class="num">${p.dups}</b> duplicado${p.dups === 1 ? '' : 's'}` : 'Sem leitura'}</div>
     ${accBox}
     ${mis ? `<div class="mismatch" role="alert" data-mismatch="${k}"><div><b>Conta errada?</b> Este arquivo parece ${it.kind === 'extrato' ? 'um <b>extrato bancário</b> (Pix, TED, saldo ou rendimentos)' : 'uma <b>fatura de cartão</b> (compras, parcelas)'}, mas <b>${esc(accLabel)}</b> é ${esc((ACC_TYPES[at] || at).toLowerCase())}. Misturados, lançamentos do extrato e da fatura podem ser descartados como repetidos e os pagamentos de fatura ficam errados.</div>
@@ -2787,7 +3034,7 @@ function renderBatch(b) {
         <p class="xs muted" id="bf-shared-hint">Todos os arquivos seguem esta conta${nOwn ? ` — <b>${nOwn}</b> com conta própria` : ''}. Arquivo de outra conta? Toque em "Alterar só este" nele.</p>
       </div>
       <p class="small muted">A importação segue a ordem das datas (mais antigo primeiro), então parcelas e repetidos são tratados como se você importasse um por vez.</p>
-      ${B.busy ? '<p class="row small"><span class="spinner"></span> Lendo arquivos…</p>' : ''}
+      ${B.busy ? `<p class="row small" id="bf-busy"><span class="spinner"></span> <span id="bf-busy-t">${esc(B.busyText || 'Lendo arquivos…')}</span></p>` : ''}
       <div class="bf-list" id="bf-list">${B.items.map(bfRowHTML).join('')}</div>
       <input type="file" id="imp-file" class="file-in" multiple accept="${FILE_ACCEPT}"><label class="drop" id="drop" for="imp-file" style="padding:12px"><b>+ Adicionar arquivos</b></label>
     </div>
@@ -2801,7 +3048,7 @@ function bfRefresh() { batchPreview(); renderImport(); }
 function bfConfigure(key) {
   const it = bfItem(key); if (!it || !it.analysis) return;
   const I = S.imp;
-  Object.assign(I, { analysis: it.analysis, profile: clone(it.profile), matched: it.matched, fileName: it.name, encoding: it.encoding, importId: it.importId,
+  Object.assign(I, { analysis: it.analysis, pdf: it.pdf || null, profile: clone(it.profile), matched: it.matched, fileName: it.name, encoding: it.encoding, importId: it.importId,
     accountId: bfAcc(it), layoutName: it.layoutName || (it.matched ? it.matched.name : ''), checksum: it.checksum || '', upgraded: [], batchKey: key, err: '' });
   runPreview(); I.step = 2; renderImport(); window.scrollTo({ top: 0 });
 }
@@ -2856,7 +3103,8 @@ function bfImport() {
       }
     }
   }
-  const res = eng('importBatch', live(), ready.map(it => ({ rows: it.analysis.rows, profile: it.profile, accountId: it.accountId, importId: it.importId, name: it.name })), ctx());
+  const fxr = fxRatesAll();
+  const res = eng('importBatch', live(), ready.map(it => ({ rows: it.analysis.rows, profile: it.profile, accountId: it.accountId, importId: it.importId, name: it.name, applyOpts: { fxRates: fxr } })), ctx());
   if (!res) return;
   const byId = new Map(res.transactions.map(t => [t.id, t]));
   commit({ txs: res.addedIds.concat(res.changedIds).map(id => byId.get(id)).filter(Boolean), render: false });
@@ -2866,16 +3114,23 @@ function bfImport() {
     const it = ready.find(x => x.importId === r.importId);
     const added = r.addedIds.map(id => txById(id)).filter(Boolean);
     const dts = added.map(t => t.date).sort();
-    const parsed = (eng('applyProfile', it.analysis.rows, it.profile, { accountId: it.accountId, importId: it.importId }) || { transactions: [] }).transactions;
+    const parsed = (eng('applyProfile', it.analysis.rows, it.profile, { accountId: it.accountId, importId: it.importId, fxRates: fxr }) || { transactions: [] }).transactions;
     d.imports[r.importId] = { id: r.importId, fileName: it.name, at: now, updatedAt: now, accountId: it.accountId, profileId: it.profileId || null, count: added.length,
       total: added.reduce((s, t) => s + t.amount, 0), from: dts[0] || null, to: dts[dts.length - 1] || null, duplicates: r.duplicates.length,
       hasBalance: parsed.some(t => t.balance != null), kindGuess: eng('guessAccountType', it.analysis, parsed) || null, batch: true };
-    summary.push({ name: it.name, importId: r.importId, imported: added.length, dup: r.duplicates.length, err: r.errors.length, auto: added.filter(t => t.categoryId).length, account: accName(it.accountId) });
+    let note = '';
+    if (it.pdf) {
+      const f = pdfImportFields(it.pdf); Object.assign(d.imports[r.importId], f);
+      if (f.cycleStart) { d.imports[r.importId].from = f.cycleStart; d.imports[r.importId].to = f.cycleEnd; }
+    }
+    note = pdfAdoptAccount(it.accountId, it.pdf, it.profile);
+    summary.push({ name: it.name, importId: r.importId, imported: added.length, dup: r.duplicates.length, err: r.errors.length, auto: added.filter(t => t.categoryId).length, account: accName(it.accountId), note });
   }
   const addedAll = res.addedIds.map(id => txById(id)).filter(Boolean);
   const months = addedAll.map(t => ymOf(t.date)).sort(); if (months.length) S.ui.month = months[months.length - 1];
   B.items = B.items.filter(it => !ready.includes(it));
   B.done = { files: summary, imported: addedAll.length, auto: addedAll.filter(t => t.categoryId).length, importIds: summary.map(x => x.importId) };
+  if (saveFxRates()) metaN.add('settings');
   commit({ meta: [...metaN] });
 }
 function renderBatchDone(b) {
@@ -2884,7 +3139,7 @@ function renderBatchDone(b) {
   b.innerHTML = `<div class="card" style="align-items:flex-start" id="batch-done">
     <span class="eyebrow">Importação concluída</span>
     <div class="result-big"><span class="num">${D0.imported}</span> importados de ${D0.files.length} arquivo${D0.files.length === 1 ? '' : 's'}</div>
-    <div style="align-self:stretch">${D0.files.map(f => `<div class="bf-sum" data-imp="${esc(f.importId)}"><b class="small" style="overflow-wrap:anywhere">${esc(f.name)}</b><span class="xs muted">${esc(f.account)} · <b class="num">${f.imported}</b> importado${f.imported === 1 ? '' : 's'} · <b class="num">${f.dup}</b> duplicado${f.dup === 1 ? '' : 's'} · <b class="num ${f.err ? 'out' : ''}">${f.err}</b> com erro</span></div>`).join('')}</div>
+    <div style="align-self:stretch">${D0.files.map(f => `<div class="bf-sum" data-imp="${esc(f.importId)}"><b class="small" style="overflow-wrap:anywhere">${esc(f.name)}</b><span class="xs muted">${esc(f.account)} · <b class="num">${f.imported}</b> importado${f.imported === 1 ? '' : 's'} · <b class="num">${f.dup}</b> duplicado${f.dup === 1 ? '' : 's'} · <b class="num ${f.err ? 'out' : ''}">${f.err}</b> com erro</span>${f.note ? `<span class="xs">${esc(f.note)}</span>` : ''}</div>`).join('')}</div>
     <p><b class="num in">${D0.auto}</b> categorizados automaticamente</p>
     <div class="row">${left ? `<button class="btn primary" type="button" data-act="triage" id="bf-triage">${left} para triagem</button>` : '<b class="in" id="bf-triage-done">tudo classificado ✓</b>'}<button class="btn" type="button" data-act="goto" data-tab="painel">Ver painel</button>
       ${B.items.length ? `<button class="btn" type="button" data-act="bf-pending-back" id="bf-back">Voltar aos ${B.items.length} pendente${B.items.length === 1 ? '' : 's'}</button>` : ''}<button class="btn ghost" type="button" data-act="imp-reset">Importar outros</button></div></div>`;
@@ -3268,11 +3523,34 @@ function openSettings(step) {
     <div class="field"><span class="lbl">Contas</span><div class="row"><button class="btn" type="button" data-act="accounts" id="btn-accounts">Contas e importações</button><button class="btn" type="button" data-act="manage" id="btn-manage">Gerenciar dados</button></div>
       <p class="xs faint">Gerenciar dados: excluir o que entrou errado — um arquivo, um mês, uma conta ou lançamentos escolhidos.</p></div>
     <div class="field" id="carry-set">${carrySettingsHTML()}</div>
+    ${fxSettingsHTML()}
     <div class="field"><span class="lbl">Backup</span>
       <div class="row"><button class="btn" type="button" data-act="export" id="btn-export" ${S.mode === 'real' && store ? '' : 'disabled'}>Exportar backup</button>
       <input type="file" id="restore-file" class="file-in" accept="${BACKUP_ACCEPT}"><label class="btn" for="restore-file">Importar backup</label></div>
       <p class="xs faint">O backup é um arquivo JSON com tudo (lançamentos, contas, regras, layouts). "Importar backup" aceita também o backup da versão anterior.</p></div>
     <div class="field"><span class="lbl">Dados</span>${danger}</div>`, null, { kind: 'settings', label: 'Ajustes' });
+}
+/* ---------- v2.4b: conversion rates of foreign-currency accounts (settings.fxRates) ---------- */
+function fxSettingsHTML() {
+  const rates = settingsObj().fxRates || {};
+  const keys = new Set();
+  for (const c of Object.keys(rates)) for (const ym of Object.keys(rates[c] || {})) keys.add(c + '|' + ym);
+  live().forEach(t => { if (t.fx && t.fx.source === 'manual') keys.add(t.fx.currency + '|' + ymOf(t.date)); });
+  if (!keys.size) return '';
+  const list = [...keys].sort();
+  return `<div class="field" id="fx-set"><span class="lbl">Cotações (contas em moeda estrangeira)</span>
+    <p class="xs faint">R$ por 1 unidade da moeda, por mês. Ao mudar, os lançamentos daquele mês são recalculados (o valor original fica guardado).</p>
+    <div class="fx-grid">${list.map(k => { const [c, ym] = k.split('|'); const v = rates[c] && rates[c][ym]; return `<div class="field"><label for="fxs-${esc(c)}-${esc(ym)}">${esc(c)} em ${esc(fmtYm(ym))}</label><input type="text" inputmode="decimal" id="fxs-${esc(c)}-${esc(ym)}" data-fxset="${esc(k)}" value="${v ? esc(String(v).replace('.', ',')) : ''}" placeholder="ex.: 5,40"></div>`; }).join('')}</div>
+    <div class="row"><button class="btn sm" type="button" data-act="fx-save" id="fx-save">Salvar cotações</button></div></div>`;
+}
+function saveFxSettings() {
+  const st = settingsObj(); const rates = clone(st.fxRates || {}) || {};
+  $$('[data-fxset]').forEach(i => { const [c, ym] = i.dataset.fxset.split('|'); const v = E.parseRate(i.value); rates[c] = rates[c] || {}; if (v) rates[c][ym] = v; else delete rates[c][ym]; });
+  const changed = eng('applyFxRates', live(), rates) || [];
+  const now = nowISO();
+  if (changed.length) commit({ txs: changed.map(t => Object.assign(t, { updatedAt: now })), render: false });
+  updateSettings(x => { x.fxRates = rates; });
+  toast(changed.length ? 'Cotações salvas · ' + changed.length + ' lançamento' + (changed.length === 1 ? '' : 's') + ' recalculado' + (changed.length === 1 ? '' : 's') : 'Cotações salvas');
 }
 function openAccountSheet() {
   if (S.auth.mode === 'netlify' && !S.auth.user) { doLogin(); return; }
@@ -3392,7 +3670,7 @@ function renderAccountsSheet() {
             <span class="money small" style="white-space:nowrap">${brl(r.total)}</span></div>
           ${moving ? `<div class="newcat" id="move-box"><div class="field"><label for="mv-acc">Mover para</label><select id="mv-acc">${others.map(a => `<option value="${esc(a.id)}" ${U.move.to === a.id ? 'selected' : ''}>${esc(a.name)} · ${esc(ACC_TYPES[a.type] || a.type)}</option>`).join('')}<option value="__new" ${U.move.to === '__new' || !others.length ? 'selected' : ''}>Nova conta…</option></select></div>
               <div class="form-grid" id="mv-new" ${U.move.to === '__new' || !others.length ? '' : 'hidden'}><div class="field"><label for="mv-name">Nome</label><input type="text" id="mv-name" placeholder="Ex.: XP conta corrente" value="${esc(U.move.name || '')}"></div>
-              <div class="field"><label for="mv-type">Tipo</label><select id="mv-type">${['checking', 'credit_card', 'savings', 'cash'].map(k => `<option value="${k}" ${(U.move.type || 'checking') === k ? 'selected' : ''}>${ACC_TYPES[k]}</option>`).join('')}</select></div></div>
+              <div class="field"><label for="mv-type">Tipo</label><select id="mv-type">${['checking', 'credit_card', 'savings', 'benefit', 'cash'].map(k => `<option value="${k}" ${(U.move.type || 'checking') === k ? 'selected' : ''}>${ACC_TYPES[k]}</option>`).join('')}</select></div></div>
               <div class="row end"><button class="btn sm" type="button" data-act="imp-move-cancel">Cancelar</button><button class="btn sm primary" type="button" data-act="imp-move-do" data-id="${esc(r.id)}" id="mv-confirm">Mover ${r.count}</button></div></div>`
           : deleting ? `<div class="banner err" id="del-box"><div class="grow"><b>Excluir esta importação?</b> ${r.count} lançamento${r.count === 1 ? '' : 's'} somem de todas as telas (inclusive categorias manuais)${(() => { const pl = delPlan({ importIds: [r.id] }); return ' · ' + esc(pl.months.map(ymShort).join(', ')) + ' · soma ' + brl(pl.sum); })()}. Dá para desfazer logo depois, no aviso.</div></div>
               <div class="row end"><button class="btn sm" type="button" data-act="imp-del-cancel">Cancelar</button><button class="btn sm danger" type="button" data-act="imp-del-do" data-id="${esc(r.id)}" id="del-confirm">Excluir ${r.count}</button></div>`
@@ -3667,6 +3945,11 @@ const ACT = {
   'imp-batch-save': () => bfConfigSave(),
   'bf-remove': el => { const B = S.imp.batch; B.items = B.items.filter(it => it.key !== el.dataset.key); if (!B.items.length) S.imp.batch = null; bfRefresh(); },
   'bf-config': el => bfConfigure(el.dataset.key),
+  'bf-pw': el => bfPassword(el.dataset.key),
+  'imp-pdf-pw': () => { const I = S.imp; if (!I.pdfPw) return; const inp = $('#imp-pdf-pw'); const pw = inp ? inp.value : ''; if (inp) inp.value = ''; if (!pw) { toast('Digite a senha do PDF.', true); if (inp) inp.focus(); return; } handleFile(I.pdfPw.file, pw); },
+  'imp-pdf-pw-cancel': () => { S.imp.pdfPw = null; renderImport(); },
+  'fx-list': () => { const p = period(); S.ui.adv = Object.assign(emptyAdv(), { fx: true, from: p.from, to: p.to }); S.ui.filter = 'all'; saveTxPrefs(); setTab('tx'); },
+  'fx-save': () => saveFxSettings(),
   'bf-fix': el => { const it = bfItem(el.dataset.key); if (!it) return; if (el.dataset.to === '__new') { bfFormOpen(it.key, kindAccType(it.kind)); return; } it.ov = { id: el.dataset.to, auto: false }; bfRefresh(); },
   'bf-own': el => { const it = bfItem(el.dataset.key); if (!it) return; it.ov = { id: bfAcc(it), auto: false }; bfRefresh(); const s = $('#bf-acc-' + CSS.escape(it.key)); if (s) s.focus(); },
   'bf-default': el => { const it = bfItem(el.dataset.key); if (!it) return; const B = S.imp.batch; if (B.form && B.form.target === it.key) B.form = null; it.ov = null; it.sug = null; bfRefresh(); },
@@ -3778,6 +4061,8 @@ document.addEventListener('click', ev => {
   try { fn(el, ev); } catch (e) { reportErr('Algo deu errado: ' + (e.message || e)); console.error(e); }
 });
 document.addEventListener('keydown', ev => {
+  if (ev.key === 'Enter' && ev.target && ev.target.id === 'imp-pdf-pw') { ev.preventDefault(); ACT['imp-pdf-pw'](); return; }
+  if (ev.key === 'Enter' && ev.target && ev.target.dataset && ev.target.dataset.bfpw) { ev.preventDefault(); bfPassword(ev.target.dataset.bfpw); return; }
   if (ev.key === 'Escape') { if ($('#sheet-root').innerHTML) closeSheet(); else if ($('#triage-root').innerHTML) stopTriage(); }
   if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.classList && ev.target.classList.contains('sk-node')) { ev.preventDefault(); openNodeSheet(ev.target.dataset.id); }
   if ((ev.ctrlKey || ev.metaKey) && ev.key === 'z' && $('#triage-root').innerHTML && TRI.undo.length && !/^(INPUT|TEXTAREA)$/.test((ev.target || {}).tagName || '')) { ev.preventDefault(); triageUndo(); }
@@ -3840,10 +4125,17 @@ document.addEventListener('change', ev => {
     if (t.dataset && t.dataset.bfacc) { const it = bfItem(t.dataset.bfacc); if (!it) return; const B = S.imp.batch; if (t.value === '__new') { bfFormOpen(it.key); return; } if (B.form && B.form.target === it.key) B.form = null; it.ov = { id: t.value, auto: false }; bfRefresh(); return; }
     if (t.id === 'bf-shared') { const B = S.imp.batch; if (t.value === '__new') { bfFormOpen('shared'); return; } if (B.form && B.form.target === 'shared') B.form = null; B.shared = t.value; B.sharedTouched = true; bfAutoAll(B); bfRefresh(); return; }
     if (t.id === 'bf-new-type') { if (S.imp && S.imp.batch && S.imp.batch.form) S.imp.batch.form.type = t.value; return; }
+    if (t.dataset && t.dataset.fxrate && S.imp) {
+      const [cur, ym] = t.dataset.fxrate.split('|'); const v = E.parseRate(t.value);
+      S.imp.fxRates[cur] = S.imp.fxRates[cur] || {};
+      if (v) S.imp.fxRates[cur][ym] = v; else delete S.imp.fxRates[cur][ym];
+      if (S.imp.batch && !S.imp.batchKey) bfRefresh(); else { runPreview(); renderImport(); }
+      return;
+    }
     if (t.id === 'imp-file' && t.files && t.files.length) { const fs = Array.from(t.files); t.value = ''; handleFiles(fs); }
     else if (t.id === 'restore-file' && t.files && t.files[0]) readBackup(t.files[0]);
     else if (t.id === 'imp-acc') { S.imp.accountId = t.value; S.imp.accTouched = true; $('#new-acc').hidden = t.value !== '__new'; const an = $('#imp-alert-note'); if (an) an.hidden = t.value !== S.imp.fromAlert; }
-    else if (t.id === 'imp-acc-type') { S.imp.newAcc.type = t.value; }
+    else if (t.id === 'imp-acc-type') { S.imp.newAcc.type = t.value; S.imp.accTypeTouched = true; }
     else if (t.dataset && t.dataset.col != null && t.id.startsWith('imp-col-')) setColumnRole(+t.dataset.col, t.value);
     else if (t.id === 'imp-sign') { S.imp.profile.signConvention = t.value; runPreview(); renderImport(); }
     else if (t.id === 'hol-adv') { readHolerite(); const box = $('#hol-adv-box'); if (box) box.hidden = !t.checked; if (t.checked && !S.imp.hol.advDateTouched) { S.imp.hol.advDate = E.defaultAdvanceDate(S.imp.hol.date); const ad = $('#hol-adv-date'); if (ad) ad.value = isoToBR(S.imp.hol.advDate); } const sp = $('#hol-split'); if (sp) sp.innerHTML = holSplitHTML(S.imp.hol); }
