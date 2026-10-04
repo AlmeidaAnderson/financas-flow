@@ -226,3 +226,76 @@ test('v2.3 dataHealth c: with a configured card, each payment is checked against
   const two = H(ext.concat(f9, f10, [pay('2026-08-06', 33333, 'p8')]), accounts.concat([{ id: 'nu', name: 'Nubank', type: 'credit_card' }])).find(w => w.id === 'c:no-fatura:p8');
   assert.ok(two && !/fechou em/.test(two.detail), 'falls back to the old wording');
 });
+
+// ---- review regressions (independent test pass) ----
+test('v2.3 review: a fatura whose last purchase is days before the closing still covers its cycle', () => {
+  const acc = card();
+  const prev = fatura('imp-ago', '2026-07-28', '2026-08-27');
+  const imports = { 'imp-ago': { id: 'imp-ago', fileName: 'Fatura2026-09-05.csv', at: '2026-09-02T12:00:00Z' } };
+  const fe = (rows, imps, today) => E.updateAlerts({ accounts: [acc], transactions: prev.concat(rows), imports: Object.assign({}, imports, imps), today: today || '2026-10-01' }).filter(a => a.kind === 'fatura_fechou').map(a => a.id);
+  // quiet last week: last purchase 20/09 (closing 28/09), imported after the closing, no date in the name
+  const quiet = fatura('imp-set', '2026-08-28', '2026-09-20');
+  assert.deepEqual(fe(quiet, { 'imp-set': { id: 'imp-set', fileName: 'fatura.csv', at: '2026-09-30T12:00:00Z' } }), []);
+  // same file without an import time: ≤ 10 days before the closing still counts
+  assert.deepEqual(fe(quiet, { 'imp-set': { id: 'imp-set', fileName: 'fatura.csv' } }), []);
+  // parcelas of older purchases (dated by originalDate + n months, some after the closing day) do not move the cycle
+  const parc = fatura('imp-set', '2026-08-28', '2026-09-22').concat([
+    tx('2026-09-10', -500, 'LOJA PARC', 'cartao', 'imp-set', { installment: { n: 3, total: 5 }, originalDate: '2026-07-10' }),
+    tx('2026-09-29', -500, 'LOJA PARC', 'cartao', 'imp-set', { installment: { n: 2, total: 5 }, originalDate: '2026-08-29' }),
+    tx('2026-05-10', -700, 'OUTRA PARC', 'cartao', 'imp-set', { installment: { n: 5, total: 10 } })]);
+  assert.deepEqual(fe(parc, { 'imp-set': { id: 'imp-set', fileName: 'fatura.csv', at: '2026-09-29T12:00:00Z' } }), [], 'covered, and an old-dated parcela is not a "hole" before July');
+  // a purchase on the closing day itself (banks that include it) or a late fee the day after
+  const incl = fatura('imp-set', '2026-08-28', '2026-09-28').concat([tx('2026-09-29', -300, 'IOF', 'cartao', 'imp-set')]);
+  assert.deepEqual(fe(incl, { 'imp-set': { id: 'imp-set', fileName: 'fatura.csv', at: '2026-09-30T12:00:00Z' } }), []);
+  // a few purchases posted late from the previous cycle do not move the file to the wrong cycle
+  const late = fatura('imp-set', '2026-08-28', '2026-09-27').concat([tx('2026-08-24', -900, 'ATRASADA', 'cartao', 'imp-set')]);
+  assert.deepEqual(fe(late, { 'imp-set': { id: 'imp-set', fileName: 'fatura.csv', at: '2026-09-30T12:00:00Z' } }), []);
+});
+
+test('v2.3 review: a partial export imported before the closing does not silence the alert', () => {
+  const acc = card();
+  const prev = fatura('imp-ago', '2026-07-28', '2026-08-27');
+  const part = fatura('imp-set', '2026-08-28', '2026-09-24');
+  const imports = { 'imp-ago': { id: 'imp-ago', fileName: 'Fatura2026-09-05.csv' }, 'imp-set': { id: 'imp-set', fileName: 'fatura-aberta.csv', at: '2026-09-25T12:00:00Z' } };
+  const al = E.updateAlerts({ accounts: [acc], transactions: prev.concat(part), imports, today: '2026-10-01' }).filter(a => a.kind === 'fatura_fechou');
+  assert.deepEqual(ids(al), ['fatura_fechou:cartao:2026-09']);
+  // the open cycle exported after the previous closing does not count for that (open) cycle once it closes
+  const full = fatura('imp-set', '2026-08-28', '2026-09-27'), open = fatura('imp-out', '2026-09-28', '2026-10-20');
+  const imp2 = { 'imp-ago': imports['imp-ago'], 'imp-set': { id: 'imp-set', fileName: 'Fatura2026-10-05.csv' }, 'imp-out': { id: 'imp-out', fileName: 'parcial.csv', at: '2026-10-21T12:00:00Z' } };
+  assert.deepEqual(ids(E.updateAlerts({ accounts: [acc], transactions: prev.concat(full, open), imports: imp2, today: '2026-10-30' }).filter(a => a.kind === 'fatura_fechou')), ['fatura_fechou:cartao:2026-10']);
+});
+
+test('v2.3 review: alert dates around the closing/due day (30/31-day months, February, December → January)', () => {
+  const run = (closingDay, dueDay, today) => E.updateAlerts({ accounts: [card({ closingDay, dueDay })], transactions: [], imports: {}, today });
+  const fe = (cd, dd, today) => run(cd, dd, today).filter(a => a.kind === 'fatura_fechou').map(a => a.title + ' | ' + a.detail);
+  // day before / on / after the closing day (28, due 05 of the next month)
+  assert.deepEqual(fe(28, 5, '2026-09-27'), ['Fatura de Cartão XP fechou em 28/08 | Importe a fatura (venceu 05/09) — compras de 28/07 a 27/08.']);
+  assert.deepEqual(fe(28, 5, '2026-09-28'), ['Fatura de Cartão XP fechou em 28/08 | Importe a fatura (venceu 05/09) — compras de 28/07 a 27/08.'], 'still open on the closing day');
+  assert.deepEqual(fe(28, 5, '2026-09-29'), ['Fatura de Cartão XP fechou em 28/09 | Importe a fatura (vence 05/10) — compras de 28/08 a 27/09.']);
+  assert.deepEqual(fe(28, 5, '2026-10-06'), ['Fatura de Cartão XP fechou em 28/09 | Importe a fatura (venceu 05/10) — compras de 28/08 a 27/09.'], 'after the due date');
+  // closing 31: April (30 days) and February
+  assert.deepEqual(fe(31, 8, '2026-05-01'), ['Fatura de Cartão XP fechou em 30/04 | Importe a fatura (vence 08/05) — compras de 31/03 a 29/04.']);
+  assert.deepEqual(fe(31, 10, '2026-03-01'), ['Fatura de Cartão XP fechou em 28/02 | Importe a fatura (vence 10/03) — compras de 31/01 a 27/02.']);
+  // December → January
+  assert.deepEqual(fe(28, 5, '2026-12-29'), ['Fatura de Cartão XP fechou em 28/12 | Importe a fatura (vence 05/01) — compras de 28/11 a 27/12.']);
+  assert.equal(run(25, 2, '2027-01-01').find(a => a.kind === 'fatura_vence').title, 'Fatura de Cartão XP vence amanhã (02/01)');
+  // due day after the closing day → same month
+  assert.deepEqual(fe(5, 12, '2026-10-06'), ['Fatura de Cartão XP fechou em 05/10 | Importe a fatura (vence 12/10) — compras de 05/09 a 04/10.']);
+});
+
+test('v2.3 review: dismissing a cycle does not hide the next one', () => {
+  const acc = card();
+  const settings = { dismissedAlerts: ['fatura_fechou:cartao:2026-09', 'fatura_vence:cartao:2026-09'] };
+  assert.deepEqual(E.updateAlerts({ accounts: [acc], transactions: [], imports: {}, today: '2026-10-03', settings }), []);
+  assert.deepEqual(ids(E.updateAlerts({ accounts: [acc], transactions: [], imports: {}, today: '2026-10-29', settings })), ['fatura_fechou:cartao:2026-10']);
+  assert.deepEqual(ids(E.updateAlerts({ accounts: [acc], transactions: [], imports: {}, today: '2026-11-03', settings })), ['fatura_fechou:cartao:2026-10', 'fatura_vence:cartao:2026-10']);
+});
+
+test('v2.3 review: no "Defina o dia de fechamento" for a card account that only holds bank extratos', () => {
+  const ext = [];
+  for (let i = 0; i < 6; i++) ext.push(tx(addDays('2026-04-07', i * 4), i % 2 ? 50000 : -2000, i % 2 ? 'TED RECEBIDA' : 'PIX ENVIADO', 'nu', 'ex', { balance: 1000 + i }));
+  const imports = { ex: { id: 'ex', fileName: 'extrato_de_01-04-2026_ate_30-04-2026.csv', kindGuess: 'checking' } };
+  assert.deepEqual(E.updateAlerts({ accounts: [{ id: 'nu', name: 'Nu', type: 'credit_card' }], transactions: ext, imports, today: '2026-10-03' }), []);
+  // an empty card is still asked
+  assert.deepEqual(ids(E.updateAlerts({ accounts: [{ id: 'nu', name: 'Nu', type: 'credit_card' }], transactions: [], imports: {}, today: '2026-10-03' })), ['configurar:nu']);
+});

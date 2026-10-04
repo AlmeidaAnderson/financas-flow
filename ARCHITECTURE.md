@@ -110,8 +110,11 @@ The "local" adapter (localStorage) is used for dev, tests and when not signed in
   (day clamped to the month's last day; start = previous closeDate, end = closeDate − 1; dueDate = first dueDay after the
   nominal closing day; overrides move closeDate, never the due date). `updateAlerts({accounts, imports, transactions,
   today, settings})` → alerts `{id, accountId, kind, severity, title, short, detail, cycle, date, action}`; a fatura
-  import covers a cycle when its file-name date (`fileDates`) is the cycle's due date (±3 days) or its purchases reach the
-  cycle's last days (`cycleOfImport`; extratos never count). `inferCardDays({accountId, accounts, transactions, imports})`
+  import covers a cycle when its file-name date (`fileDates`) is the cycle's due date (±3 days), or else when that cycle
+  holds ≥ 60% of its purchases (parcelas and payments left out; up to 2 days after a closing still counts for it) and the
+  file was imported on/after the closing date (`at`; without it: purchases until ≤ 10 days before the closing) —
+  `cycleOfImport`; extratos never count. A "hole" (older closed cycle) is judged by the first non-parcela purchase. A card
+  account holding only extratos gets no "configurar" alert (data health already says "Mover importação"). `inferCardDays({accountId, accounts, transactions, imports})`
   ("Sugerir pelos dados": closing day = most frequent first-purchase day / day after the last purchase of each fatura;
   due day = the date in the fatura file names, else the usual day of the fatura payments) — the UI only pre-fills.
 - dataHealth "c" (payment ↔ fatura): when the card has closing + due day, each payment is matched to the cycle whose due

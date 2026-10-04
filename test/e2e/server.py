@@ -87,8 +87,21 @@ class H(http.server.SimpleHTTPRequestHandler):
             return self._json({'seq': st['seq'], 'state': st})
 
 
+
+class QuietServer(http.server.ThreadingHTTPServer):
+    """The browser aborts in-flight requests when a page is closed, reloaded or navigated (a poll, the 650 KB page):
+    the write then fails with BrokenPipe/ConnectionReset and the stock handle_error prints a traceback. Not a failure."""
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        import sys as _sys
+        if isinstance(_sys.exc_info()[1], (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def start(port=8766):
-    srv = http.server.ThreadingHTTPServer(('127.0.0.1', port), H)
+    srv = QuietServer(('127.0.0.1', port), H)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     return srv
@@ -97,4 +110,4 @@ def start(port=8766):
 if __name__ == '__main__':
     p = int(sys.argv[1]) if len(sys.argv) > 1 else 8766
     print('serving', SITE, 'on', p)
-    http.server.ThreadingHTTPServer(('127.0.0.1', p), H).serve_forever()
+    QuietServer(('127.0.0.1', p), H).serve_forever()

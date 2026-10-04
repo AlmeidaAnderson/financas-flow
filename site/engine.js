@@ -2689,7 +2689,7 @@
         for (const f of faturas) {
           const acc = cards.find(a => a.id === f.i.accountId); if (!acc) continue;
           const plain = f.i.list.filter(t => !t.installment && t.kind !== 'card_payment').map(t => t.date).sort();
-          const g = { kind: f.i.kind, fileDates: fileDates(f.i.rec.fileName), min: plain[0] || f.from, max: plain[plain.length - 1] || f.to };
+          const g = { kind: f.i.kind, fileDates: fileDates(f.i.rec.fileName), min: plain[0] || f.from, max: plain[plain.length - 1] || f.to, dates: plain };
           const c = cycleOfImport(g, cardCycles(acc, { from: addDays(f.from, -60), to: addDays(f.to, 60) }));
           if (c) { cycOf.set(f, acc.id + ':' + c.ym); f.cycle = c; }
         }
@@ -3350,20 +3350,48 @@
       const ds = (plain.length ? plain : list).map(t => t.date).sort();
       const all = list.map(t => t.date).sort();
       const fp = filePeriod(rec.fileName);
-      out.push({ id, rec, list, accountId, kind: importKind(list, rec), name: rec.fileName || id, min: ds[0], max: ds[ds.length - 1],
+      out.push({ id, rec, list, accountId, kind: importKind(list, rec), name: rec.fileName || id, min: ds[0], max: ds[ds.length - 1], dates: ds, at: rec.at || null,
         from: all[0], to: all[all.length - 1], coverTo: fp && fp[1] > all[all.length - 1] ? fp[1] : all[all.length - 1], fileDates: fileDates(rec.fileName) });
     }
     return out;
   }
-  /** the cycle a fatura import belongs to: its file-name date = the cycle's due date (±3 days), else its purchases reach
-   *  the cycle's last days (latest purchase between end−4 and closeDate+5) and start inside it. null for extratos. */
-  function cycleOfImport(g, cycles) {
+  /** the local calendar day of an ISO timestamp (the import time "at"), or null */
+  function localDay(ts) {
+    if (typeof ts !== 'string' || !ts) return null;
+    if (isoRe.test(ts)) return ts;
+    const d = new Date(ts); if (isNaN(d)) return null;
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+  /** the cycle a fatura import belongs to (null for extratos):
+   *  1. a date in the file name = the cycle's due date (±3 days);
+   *  2. else the cycle that holds most of its purchases (parcelas — dated by their original purchase — and payments left
+   *     out; a purchase up to 2 days after a closing day counts for the fatura that closed, as some banks include the
+   *     closing day), when it holds at least 60% of them (a multi-month export is not one fatura).
+   *  opts.complete (the update alerts): the file must hold the whole cycle — imported on/after the closing date (g.at),
+   *  or, for an import without a time, purchases until ≤ 10 days before the closing (a quiet last week is normal). */
+  function cycleOfImport(g, cycles, opts) {
     if (!g || g.kind === 'extrato' || !cycles.length) return null;
     for (const d of g.fileDates || []) {
       const c = cycles.find(c => c.dueDate && Math.abs(dayNum(c.dueDate) - dayNum(d)) <= 3);
       if (c) return c;
     }
-    return cycles.find(c => g.max >= addDays(c.end, -4) && g.max <= addDays(c.closeDate, 5) && g.min >= addDays(c.start, -7)) || null;
+    const ds = (g.dates && g.dates.length ? g.dates : [g.min, g.max]).filter(Boolean);
+    if (!ds.length) return null;
+    const asc = cycles.slice().sort((a, b) => a.closeDate.localeCompare(b.closeDate));
+    const n = new Map();
+    for (const d of ds) {
+      const c = asc.find(c => d >= c.start && d <= addDays(c.closeDate, 2));
+      if (c) n.set(c, (n.get(c) || 0) + 1);
+    }
+    let best = null;
+    for (const [c, k] of n) if (!best || k > best[1] || (k === best[1] && c.closeDate > best[0].closeDate)) best = [c, k];
+    if (!best || best[1] < 0.6 * ds.length) return null;
+    const c = best[0];
+    if (opts && opts.complete) {
+      const at = localDay(g.at);
+      if (at ? at < c.closeDate : (g.max || ds[ds.length - 1]) < addDays(c.end, -10)) return null;
+    }
+    return c;
   }
   const mode = arr => { const f = new Map(); arr.forEach(x => f.set(x, (f.get(x) || 0) + 1)); return [...f.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0] || null; };
   /** inferCardDays({ account|accountId, accounts, transactions, imports }) -> { closingDay, dueDay, basis: [pt-BR], samples }
@@ -3438,6 +3466,10 @@
       const accRows = txs.filter(t => t.accountId === acc.id);
       if (acc.type === 'credit_card') {
         if (!validDay(acc.closingDay)) {
+          // a "card" holding only bank extratos is a mistyped account: data health already says "Mover importação";
+          // asking for its closing day would be noise
+          const gs = groups.filter(g => g.accountId === acc.id);
+          if (gs.length && gs.every(g => g.kind === 'extrato')) continue;
           push({ id: 'configurar:' + acc.id, accountId: acc.id, kind: 'configurar', severity: 'info', date: today,
             title: 'Defina o dia de fechamento de ' + name, short: 'Defina o dia de fechamento',
             detail: 'Com o dia de fechamento e o de vencimento da fatura, o app avisa quando ela fechar e houver compras novas para importar.',
@@ -3446,8 +3478,9 @@
         }
         const cycles = cardCycles(acc, { from: addDays(today, -120), to: addDays(today, 45), today });
         const mine = groups.filter(g => g.accountId === acc.id);
-        const covered = new Set(mine.map(g => cycleOfImport(g, cycles)).filter(Boolean).map(c => c.ym));
-        const firstRow = accRows.map(t => t.date).sort()[0] || null;
+        const covered = new Set(mine.map(g => cycleOfImport(g, cycles, { complete: true })).filter(Boolean).map(c => c.ym));
+        // the first purchase of the card (parcelas carry their original purchase date, months before the fatura)
+        const firstRow = accRows.filter(t => !t.installment && t.kind !== 'card_payment').map(t => t.date).sort()[0] || null;
         const closed = cycles.filter(c => today > c.closeDate && dayNum(today) - dayNum(c.closeDate) <= 70).sort((a, b) => b.closeDate.localeCompare(a.closeDate));
         closed.forEach((c, i) => {
           if (covered.has(c.ym)) return;

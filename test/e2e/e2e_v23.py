@@ -173,9 +173,9 @@ def db_meta(ns, name):
     return (artifact_server.docs(ns).get(f'{BASE}/v2meta/{name}') or {}).get('data', {}).get('data')
 
 
-def new_ctx(b, scheme, w, h):
+def new_ctx(b, scheme, w, h, now=None):
     ctx = b.new_context(viewport={'width': w, 'height': h}, color_scheme=scheme, device_scale_factor=2)
-    ctx.clock.install(time=NOW)
+    ctx.clock.install(time=now or NOW)
     ctx.clock.resume()
     ctx.route(re.compile(r'https://fonts\.(googleapis|gstatic)\.com/.*'), lambda r: r.fulfill(status=200, body='', content_type='text/css'))
     ctx.route(re.compile(r'https://cdn\.jsdelivr\.net/.*'), lambda r: r.fulfill(status=200, body='/* xlsx stub */', content_type='text/javascript', headers={'access-control-allow-origin': '*'}))
@@ -188,8 +188,8 @@ def attach(pg):
     pg.on('pageerror', lambda e: pg._errs.append('PAGEERROR ' + str(e)))
 
 
-def open_artifact(b, ns, scheme='light', w=390, h=844):
-    ctx = new_ctx(b, scheme, w, h)
+def open_artifact(b, ns, scheme='light', w=390, h=844, now=None):
+    ctx = new_ctx(b, scheme, w, h, now)
     cfg = {'ns': ns, 'uid': UID}
     ctx.add_init_script(FAKE_JS + '\n;(function(c){ window.__saved = [];'
                         ' var f = FakeClaude.createFakeClaude({ backend: FakeClaude.createHttpBackend("/__fakedb", c.ns, 150), userId: c.uid, delayMs: 60, saved: window.__saved });'
@@ -427,6 +427,8 @@ def screens(pg, tag):
     shot(pg, f'{tag}-painel')
     sticky_ok(pg, tag)
     pg.click('#btn-alerts'); pg.wait_for_selector('#alerts-list')
+    n_sheet = pg.locator('#alerts-list .al').count()
+    check(n_sheet == bl['count'] and bl['badge'] == str(n_sheet), f'{tag}: badge {bl["badge"]} = {n_sheet} cards in the sheet')
     no_hscroll(pg, f'{tag} alerts sheet')
     shot(pg, f'{tag}-sheet')
     pg.click('#alerts-list [data-aid="fatura_fechou:cartao:2026-09"] [data-act="al-other"]'); pg.wait_for_selector('#al-other-date')
@@ -451,6 +453,16 @@ def scenario_artifact(b):
     check(J(pg, '() => __ff.state().auth.mode') == 'artifact', 'artifact mode')
     check(J(pg, '() => __ff.D().accounts.every(a => !("closingDay" in a) && !("remind" in a) && !("alerts" in a))'), 'migration keeps the existing accounts untouched')
     flow(pg, 'art-390-light', second=lambda: open_artifact(b, ns))
+    ctx.close()
+    section('A2. the next cycle (device date 29/10/2026): a dismissal covers one cycle only')
+    ctx, pg = open_artifact(b, ns, now=datetime.datetime(2026, 10, 29, 10, 0, 0))
+    ids = alert_ids(pg)
+    check('fatura_fechou:cartao:2026-10' in ids and not any(i.endswith(':2026-09') for i in ids), f'29/10: the October fatura alert shows, September stays dismissed/imported ({ids})')
+    goto_tab(pg, 'painel')
+    check('Fatura fechou em 28/10' in pg.inner_text('#alert-line'), f'29/10: Painel line "{pg.inner_text("#alert-line").strip()}"')
+    pg.click('#btn-alerts'); pg.wait_for_selector('#alerts-list')
+    check(pg.locator('#alerts-list .al').count() == bell(pg)['count'], '29/10: badge = cards in the sheet')
+    check(not pg._errs, f'29/10: no console errors {pg._errs[:3]}')
     ctx.close()
 
 
