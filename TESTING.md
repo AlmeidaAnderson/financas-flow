@@ -83,3 +83,15 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
 - [ ] On a phone: "Escolher arquivos" opens the picker; bank CSVs are not greyed out; "Importar backup" works.
 - [ ] Paste a CSV in "Ou cole o conteúdo do arquivo" → import → "Colar outro arquivo" → paste the next one.
 - Automated: `python3 test/e2e/e2e_mobile.py` (WebView / Android / desktop UAs at 390 px; screenshots in `screens/mobile/`).
+
+## v2.3 — Alertas de atualização (5 min)
+- [ ] Ajustes → Contas e importações → seu cartão → **Alertas de atualização** → "Sugerir pelos dados" → confira os dias
+      (nada é salvo antes de **Salvar**) → Salvar.
+- [ ] Depois do fechamento: o sino no topo mostra o número de alertas; o Painel mostra "Fatura fechou em dd/mm · cartão".
+      Toque → "Importar agora" abre Importar com o cartão escolhido → importe a fatura → o alerta some.
+- [ ] "Fechou em outra data" (dd/mm/aaaa) muda só aquele ciclo; o × na conta volta ao dia normal.
+- [ ] "Já importei / Ignorar este ciclo" → recarregue e abra no celular: continua ignorado.
+- [ ] Conta corrente → "Lembrar de atualizar": Toda semana / A cada 15 dias / Todo mês (dia) / Nunca.
+- Automated: `npm test` (test/engine_v23.test.js) and `python3 test/e2e/e2e_v23.py` (relógio fixo em 03/10/2026; Artifact +
+  local mode, 390/1280, light/dark; segunda página sincronizada; leitura somente do snapshot real quando presente — só
+  imprime os dias sugeridos). Screenshots: `screens/v23/`.

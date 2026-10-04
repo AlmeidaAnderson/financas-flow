@@ -1,6 +1,6 @@
 {
   "name": "financas-flow",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "description": "Finanças Flow — app pessoal de finanças (PWA) hospedado na Netlify",
   "license": "UNLICENSED",

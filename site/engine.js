@@ -2682,29 +2682,72 @@
         .sort((a, b) => a.date.localeCompare(b.date));
       const used = new Set(), matched = new Set();
       const inWindow = (p, f) => { const d = dayNum(p.date) - dayNum(f.to); return d >= -3 && d <= 45; };
-      // exact amounts first (anywhere in the window), then the closest unused fatura by date
+      // v2.3: cards with closing + due day → each payment belongs to the cycle whose due date is nearest (≤ 12 days)
+      const cards = accounts.filter(a => a.type === 'credit_card' && validDay(a.closingDay) && validDay(a.dueDay));
+      const cycOf = new Map(), viaCycle = new Map();
+      if (cards.length) {
+        for (const f of faturas) {
+          const acc = cards.find(a => a.id === f.i.accountId); if (!acc) continue;
+          const plain = f.i.list.filter(t => !t.installment && t.kind !== 'card_payment').map(t => t.date).sort();
+          const g = { kind: f.i.kind, fileDates: fileDates(f.i.rec.fileName), min: plain[0] || f.from, max: plain[plain.length - 1] || f.to };
+          const c = cycleOfImport(g, cardCycles(acc, { from: addDays(f.from, -60), to: addDays(f.to, 60) }));
+          if (c) { cycOf.set(f, acc.id + ':' + c.ym); f.cycle = c; }
+        }
+        // which card a payment is for: the card side it is linked to; else the card account it sits in (extrato kept inside
+        // the card); else any configured card, but only when every card account is configured (else it may be another one)
+        const byId = new Map(txs.map(t => [t.id, t]));
+        const allCards = accounts.filter(a => a.type === 'credit_card');
+        for (const p of pays) {
+          const o = p.linkedTo && byId.get(p.linkedTo);
+          const pool = o && typeOf(o.accountId) === 'credit_card' ? cards.filter(a => a.id === o.accountId)
+            : typeOf(p.accountId) === 'credit_card' ? cards.filter(a => a.id === p.accountId)
+              : cards.length === allCards.length ? cards : [];
+          const pc = pool.length ? paymentCycle(p, pool) : null;
+          if (pc) viaCycle.set(p, Object.assign(pc, { key: pc.acc.id + ':' + pc.c.ym }));
+        }
+      }
+      const otherCycle = (p, f) => { const pc = viaCycle.get(p); return !!(pc && cycOf.has(f) && cycOf.get(f) !== pc.key); };
+      const mismatch = (p, f) => {
+        const diff = -p.amount - f.total; // > 0: paid more than the purchases in the file
+        // a fatura row of exactly that amount may have been dropped on import as a "repeat" of a row from
+        // ANOTHER import of the same account (typically an extrato kept inside the card account)
+        const lookalike = diff > 0 ? txs.find(t => t.importId !== f.i.id && t.amount === -diff && t.kind === 'expense' &&
+          t.date >= f.from && t.date <= f.to && f.i.list.some(o => o.amount === t.amount && Math.abs(dayNum(o.date) - dayNum(t.date)) <= 2 && merchantSimilar(o.merchant || o.rawDescription, t.merchant || t.rawDescription))) : null;
+        const why = lookalike
+          ? ' A diferença é igual a um lançamento de ' + (lookalike.merchant || lookalike.rawDescription) + ' em ' + lookalike.date.split('-').reverse().join('/') + ' que está em outra importação' + (lookalike.accountId === f.i.accountId ? ' desta conta' : '') + ': provavelmente a linha igual da fatura foi descartada como repetida ao importar. ' + (lookalike.accountId === f.i.accountId ? 'Separe as importações por conta (Mover importação) e importe' : 'Importe') + ' "' + f.i.name + '" de novo — só o que falta entra.'
+          : diff > 0 ? ' Pagou-se mais do que as compras da fatura importada: pode faltar um lançamento nela (IOF, juros, tarifa, uma compra) ou o pagamento incluir saldo de outra fatura.'
+            : ' Pagou-se menos do que a fatura: pode ter sido um pagamento parcial (o resto vai para a próxima fatura, com juros) ou a fatura ter um crédito que não veio no arquivo.';
+        push({ id: 'c:mismatch:' + p.id, severity: 'warning', title: 'Pagamento não bate com a fatura',
+          detail: 'O pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ' difere em ' + formatBRL(Math.abs(diff)) + ' do total da fatura "' + f.i.name + '" (' + formatBRL(f.total) + ', ' + (f.cycle && f.cycle.dueDate ? 'vencimento ' + f.cycle.dueDate.split('-').reverse().join('/') + ', compras de ' + brDM(f.cycle.start) + ' a ' + brDM(f.cycle.end) : 'compras até ' + f.to.split('-').reverse().join('/')) + ').' + why,
+          months: [monthOf(f.to)], accountId: f.i.accountId, importIds: [f.i.id, p.importId].filter(Boolean), txIds: lookalike ? [lookalike.id] : undefined });
+      };
+      // the cycle of each payment first (cards with closing/due day), then exact amounts (anywhere in the window),
+      // then the closest unused fatura by date
       for (const p of pays) {
-        const f = faturas.find(f => !used.has(f) && inWindow(p, f) && Math.abs(f.total + p.amount) <= 100);
+        const pc = viaCycle.get(p); if (!pc) continue;
+        const f = faturas.find(f => !used.has(f) && cycOf.get(f) === pc.key);
+        if (f) { used.add(f); matched.add(p); if (Math.abs(f.total + p.amount) > 100) mismatch(p, f); }
+      }
+      for (const p of pays) {
+        if (matched.has(p)) continue;
+        const f = faturas.find(f => !used.has(f) && !otherCycle(p, f) && inWindow(p, f) && Math.abs(f.total + p.amount) <= 100);
         if (f) { used.add(f); matched.add(p); }
       }
       for (const p of pays) {
         if (matched.has(p)) continue;
-        const cands = faturas.filter(f => !used.has(f) && inWindow(p, f)).sort((a, b) => Math.abs(dayNum(p.date) - dayNum(a.to) - 8) - Math.abs(dayNum(p.date) - dayNum(b.to) - 8));
+        const cands = faturas.filter(f => !used.has(f) && !otherCycle(p, f) && inWindow(p, f)).sort((a, b) => Math.abs(dayNum(p.date) - dayNum(a.to) - 8) - Math.abs(dayNum(p.date) - dayNum(b.to) - 8));
         const pm = monthOf(p.date);
+        const pc = viaCycle.get(p);
         if (cands.length) {
           const f = cands[0]; used.add(f); matched.add(p);
-          const diff = -p.amount - f.total; // > 0: paid more than the purchases in the file
-          // a fatura row of exactly that amount may have been dropped on import as a "repeat" of a row from
-          // ANOTHER import of the same account (typically an extrato kept inside the card account)
-          const lookalike = diff > 0 ? txs.find(t => t.importId !== f.i.id && t.amount === -diff && t.kind === 'expense' &&
-            t.date >= f.from && t.date <= f.to && f.i.list.some(o => o.amount === t.amount && Math.abs(dayNum(o.date) - dayNum(t.date)) <= 2 && merchantSimilar(o.merchant || o.rawDescription, t.merchant || t.rawDescription))) : null;
-          const why = lookalike
-            ? ' A diferença é igual a um lançamento de ' + (lookalike.merchant || lookalike.rawDescription) + ' em ' + lookalike.date.split('-').reverse().join('/') + ' que está em outra importação' + (lookalike.accountId === f.i.accountId ? ' desta conta' : '') + ': provavelmente a linha igual da fatura foi descartada como repetida ao importar. ' + (lookalike.accountId === f.i.accountId ? 'Separe as importações por conta (Mover importação) e importe' : 'Importe') + ' "' + f.i.name + '" de novo — só o que falta entra.'
-            : diff > 0 ? ' Pagou-se mais do que as compras da fatura importada: pode faltar um lançamento nela (IOF, juros, tarifa, uma compra) ou o pagamento incluir saldo de outra fatura.'
-              : ' Pagou-se menos do que a fatura: pode ter sido um pagamento parcial (o resto vai para a próxima fatura, com juros) ou a fatura ter um crédito que não veio no arquivo.';
-          push({ id: 'c:mismatch:' + p.id, severity: 'warning', title: 'Pagamento não bate com a fatura',
-            detail: 'O pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ' difere em ' + formatBRL(Math.abs(diff)) + ' do total da fatura "' + f.i.name + '" (' + formatBRL(f.total) + ', compras até ' + f.to.split('-').reverse().join('/') + ').' + why,
-            months: [monthOf(f.to)], accountId: f.i.accountId, importIds: [f.i.id, p.importId].filter(Boolean), txIds: lookalike ? [lookalike.id] : undefined });
+          mismatch(p, f);
+        } else if (pc) {
+          // the card and the cycle are known: say exactly which fatura is missing
+          const c = pc.c, miss = monthOf(c.end);
+          push({ id: 'c:no-fatura:' + p.id, severity: 'blocking', title: 'Pagamento de fatura sem a fatura',
+            detail: 'Há um pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ', mas a fatura que ele pagou não foi importada. Importe a fatura de ' + (pc.acc.name || pc.acc.id) + ' com vencimento em ' + c.dueDate.split('-').reverse().join('/') + ' (fechou em ' + brDM(c.closeDate) + '). As compras dela (de ' + brDM(c.start) + ' a ' + brDM(c.end) + ') não estão no app, por isso ' + monthName(miss) + ' fica fora do déficit acumulado.',
+            months: [miss], accountId: pc.acc.id, importIds: [p.importId].filter(Boolean), cycle: c,
+            action: { type: 'import', label: 'Importar fatura (venc. ' + brDM(c.dueDate) + ')', accountId: pc.acc.id, month: miss } });
         } else {
           const miss = addMonths(pm, -1);
           // the card: the account of the faturas imported closest to this payment (else the only card account)
@@ -3241,6 +3284,230 @@
   }
 
   // ---------------------------------------------------------------------------
+  // v2.3 — update alerts ("Alertas de atualização"): statement cycles per card, reminders per account
+  // ---------------------------------------------------------------------------
+  const ALERT_FREQS = ['weekly', 'biweekly', 'monthly', 'never'];
+  const validDay = d => { const n = Math.round(+d); return n >= 1 && n <= 31 ? n : null; };
+  /** the day in a month, clamped to its last day (31 in February → 28/29) */
+  function dayIn(ym, day) { const y = +ym.slice(0, 4), m = +ym.slice(5, 7); return ym + '-' + pad2(Math.min(day, daysInMonth(y, m))); }
+  const brDM = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) : '';
+  const isoRe = /^\d{4}-\d{2}-\d{2}$/;
+  function todayLocal() { const p = nowParts(); return p.y + '-' + pad2(p.m) + '-' + pad2(p.d); }
+  /** dates printed in a file name ("Fatura2026-10-05.csv", "fatura_05-10-2026.csv") -> ISO[] */
+  function fileDates(name) {
+    const ds = [];
+    const re = /(?<!\d)(?:(\d{2})[-_.](\d{2})[-_.](\d{4})|(\d{4})[-_.]?(\d{2})[-_.]?(\d{2}))(?!\d)/g;
+    let m;
+    while ((m = re.exec(String(name || ''))) && ds.length < 4) {
+      const iso = m[1] ? m[3] + '-' + m[2] + '-' + m[1] : m[4] + '-' + m[5] + '-' + m[6];
+      const y = +iso.slice(0, 4), mo = +iso.slice(5, 7), d = +iso.slice(8, 10);
+      if (y >= 2000 && y <= 2100 && mo >= 1 && mo <= 12 && d >= 1 && d <= daysInMonth(y, mo)) ds.push(iso);
+    }
+    return ds;
+  }
+  /** cardCycles(account, { from, to }) -> [{ ym, closeDate, dueDate, start, end, nominalClose, overridden }]
+   *  One cycle per month ("ym" = month of the nominal closing date). closeDate = closingDay of that month (clamped to the
+   *  month's last day) unless account.cycleOverrides[ym] says otherwise; purchases of the cycle run from the previous
+   *  closeDate (start) to the day before closeDate (end). dueDate = the first dueDay after the nominal closing day
+   *  (same month when dueDay > closingDay, else the next month), clamped too. Returns the cycles whose
+   *  [start, dueDate] touch [from, to] (default: the 13 months up to today + the next one). */
+  function cardCycles(account, opts) {
+    opts = opts || {};
+    const a = account || {};
+    const cd = validDay(a.closingDay);
+    if (!cd) return [];
+    const dd = validDay(a.dueDay);
+    const ov = a.cycleOverrides && typeof a.cycleOverrides === 'object' ? a.cycleOverrides : {};
+    const today = opts.today || todayLocal();
+    const from = opts.from || addDays(today, -400), to = opts.to || addDays(today, 40);
+    const close = ym => { const o = ov[ym]; return typeof o === 'string' && isoRe.test(o) && Math.abs(dayNum(o) - dayNum(dayIn(ym, cd))) <= 20 ? o : dayIn(ym, cd); };
+    const out = [];
+    for (let ym = addMonths(monthOf(from), -1); ym <= addMonths(monthOf(to), 1); ym = addMonths(ym, 1)) {
+      const nominal = dayIn(ym, cd);
+      const closeDate = close(ym);
+      const start = close(addMonths(ym, -1));
+      const dueDate = dd ? dayIn(dd > cd ? ym : addMonths(ym, 1), dd) : null;
+      const c = { ym, closeDate, dueDate, start, end: addDays(closeDate, -1), nominalClose: nominal, overridden: closeDate !== nominal };
+      if (c.end >= from.slice(0, 10) && c.start <= to.slice(0, 10)) out.push(c);
+      else if (dueDate && dueDate >= from && c.start <= to) out.push(c);
+    }
+    return out;
+  }
+  /** groups rows by import (one "file") with what the cycle matching needs */
+  function importGroups(transactions, imports) {
+    const by = new Map();
+    for (const t of transactions || []) {
+      if (!t || t.deleted || !t.date || !t.importId || t.payslip) continue;
+      if (!by.has(t.importId)) by.set(t.importId, []);
+      by.get(t.importId).push(t);
+    }
+    const out = [];
+    for (const [id, list] of by) {
+      const rec = (imports && imports[id]) || { id };
+      const freq = {}; list.forEach(t => { freq[t.accountId] = (freq[t.accountId] || 0) + 1; });
+      const accountId = Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0];
+      const plain = list.filter(t => !t.installment && t.kind !== 'card_payment');
+      const ds = (plain.length ? plain : list).map(t => t.date).sort();
+      const all = list.map(t => t.date).sort();
+      const fp = filePeriod(rec.fileName);
+      out.push({ id, rec, list, accountId, kind: importKind(list, rec), name: rec.fileName || id, min: ds[0], max: ds[ds.length - 1],
+        from: all[0], to: all[all.length - 1], coverTo: fp && fp[1] > all[all.length - 1] ? fp[1] : all[all.length - 1], fileDates: fileDates(rec.fileName) });
+    }
+    return out;
+  }
+  /** the cycle a fatura import belongs to: its file-name date = the cycle's due date (±3 days), else its purchases reach
+   *  the cycle's last days (latest purchase between end−4 and closeDate+5) and start inside it. null for extratos. */
+  function cycleOfImport(g, cycles) {
+    if (!g || g.kind === 'extrato' || !cycles.length) return null;
+    for (const d of g.fileDates || []) {
+      const c = cycles.find(c => c.dueDate && Math.abs(dayNum(c.dueDate) - dayNum(d)) <= 3);
+      if (c) return c;
+    }
+    return cycles.find(c => g.max >= addDays(c.end, -4) && g.max <= addDays(c.closeDate, 5) && g.min >= addDays(c.start, -7)) || null;
+  }
+  const mode = arr => { const f = new Map(); arr.forEach(x => f.set(x, (f.get(x) || 0) + 1)); return [...f.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0] || null; };
+  /** inferCardDays({ account|accountId, accounts, transactions, imports }) -> { closingDay, dueDay, basis: [pt-BR], samples }
+   *  From the imported faturas of the card: due day = day of the date in the file names (Fatura2026-10-05.csv), else the
+   *  usual day of the fatura payments seen in the bank; closing day = the first day of each fatura's purchases (the
+   *  previous closing) and the day after its last purchase, the most frequent wins. Never saves anything. */
+  function inferCardDays(input) {
+    input = input || {};
+    const accId = input.accountId || (input.account && input.account.id);
+    const groups = importGroups(input.transactions, input.imports).filter(g => g.accountId === accId && g.kind !== 'extrato' && g.list.length >= 2);
+    const basis = [];
+    // due day: file names
+    const dueFromNames = groups.map(g => g.fileDates.length === 1 ? g.fileDates[0] : null).filter(Boolean);
+    let dueDay = null;
+    const mn = mode(dueFromNames.map(d => +d.slice(8, 10)));
+    if (mn && (mn[1] >= 2 || dueFromNames.length === 1)) { dueDay = mn[0]; basis.push('Vencimento dia ' + dueDay + ': a data no nome de ' + mn[1] + ' fatura' + (mn[1] > 1 ? 's' : '') + ' importada' + (mn[1] > 1 ? 's' : '') + '.'); }
+    // closing day: first purchase (= previous closing) and the day after the last purchase of each fatura
+    const cands = [];
+    for (const g of groups) {
+      if (g.min) cands.push(+g.min.slice(8, 10));
+      if (g.max) cands.push(+addDays(g.max, 1).slice(8, 10));
+    }
+    let closingDay = null;
+    const mc = mode(cands);
+    if (mc && (mc[1] >= 2 || groups.length === 1)) { closingDay = mc[0]; basis.push('Fechamento dia ' + closingDay + ': as compras de ' + groups.length + ' fatura' + (groups.length > 1 ? 's' : '') + ' começam/terminam por volta desse dia.'); }
+    // due day fallback: the fatura payments seen in the bank (paid on or a little before the due day)
+    if (!dueDay) {
+      const accounts = input.accounts || [];
+      const cardIds = new Set(accounts.filter(a => a.type === 'credit_card').map(a => a.id));
+      const byId = new Map((input.transactions || []).filter(t => t && !t.deleted).map(t => [t.id, t]));
+      const pays = (input.transactions || []).filter(t => t && !t.deleted && t.kind === 'card_payment' && t.amount < 0 && t.date)
+        .filter(t => { const o = t.linkedTo && byId.get(t.linkedTo); return o ? o.accountId === accId : cardIds.size <= 1 || t.accountId === accId; });
+      const md = mode(pays.map(t => +t.date.slice(8, 10)));
+      if (md && md[1] >= 2) { dueDay = Math.max(...pays.map(t => +t.date.slice(8, 10)).filter(d => Math.abs(d - md[0]) <= 3)); basis.push('Vencimento por volta do dia ' + dueDay + ': quando os pagamentos de fatura aparecem no extrato (confira).'); }
+    }
+    return { closingDay, dueDay, basis, samples: groups.length };
+  }
+  /** "configured" = has the fields; absent fields = not configured (old accounts stay untouched) */
+  const remindOf = a => { const r = a && a.remind; return r && ALERT_FREQS.includes(r.freq) ? { freq: r.freq, day: validDay(r.day) } : null; };
+  /** the reminder occurrence (due date) for a checking/savings account: the latest one on or before today, or null */
+  function remindDue(r, last, today) {
+    if (!r || r.freq === 'never') return null;
+    if (r.freq === 'monthly') {
+      const day = r.day || 1;
+      let d = dayIn(today.slice(0, 7), day);
+      if (d > today) d = dayIn(addMonths(today.slice(0, 7), -1), day);
+      // due when the data does not reach (almost) the reminder day
+      return last && last >= addDays(d, -3) ? null : d;
+    }
+    const step = r.freq === 'weekly' ? 7 : 15;
+    if (!last) return today;
+    const gap = dayNum(today) - dayNum(last);
+    if (gap <= step) return null;
+    return addDays(last, step * Math.floor(gap / step));
+  }
+  const FREQ_TXT = { weekly: 'toda semana', biweekly: 'a cada 15 dias', monthly: 'todo mês' };
+  /** updateAlerts({ accounts, imports, transactions, today, settings? }) -> alerts[]
+   *  Alert: { id (stable per account + cycle), accountId, kind: fatura_fechou|fatura_vence|extrato_desatualizado|configurar,
+   *           severity: warning|info, title, short (the Painel line, before the account name), detail, cycle?, date, action: { type: import|configure, label, accountId } }
+   *  settings.dismissedAlerts (ids) are left out. Accounts with alerts === false give none. */
+  function updateAlerts(input) {
+    input = input || {};
+    const today = input.today || todayLocal();
+    const dismissed = new Set(((input.settings || {}).dismissedAlerts) || []);
+    const txs = (input.transactions || []).filter(t => t && !t.deleted && t.date);
+    const groups = importGroups(txs, input.imports || {});
+    const out = [];
+    const push = a => { if (!dismissed.has(a.id)) out.push(a); };
+    for (const acc of input.accounts || []) {
+      if (!acc || !acc.id || acc.alerts === false || acc.type === 'payslip') continue;
+      const name = acc.name || acc.id;
+      const accRows = txs.filter(t => t.accountId === acc.id);
+      if (acc.type === 'credit_card') {
+        if (!validDay(acc.closingDay)) {
+          push({ id: 'configurar:' + acc.id, accountId: acc.id, kind: 'configurar', severity: 'info', date: today,
+            title: 'Defina o dia de fechamento de ' + name, short: 'Defina o dia de fechamento',
+            detail: 'Com o dia de fechamento e o de vencimento da fatura, o app avisa quando ela fechar e houver compras novas para importar.',
+            action: { type: 'configure', label: 'Configurar conta', accountId: acc.id } });
+          continue;
+        }
+        const cycles = cardCycles(acc, { from: addDays(today, -120), to: addDays(today, 45), today });
+        const mine = groups.filter(g => g.accountId === acc.id);
+        const covered = new Set(mine.map(g => cycleOfImport(g, cycles)).filter(Boolean).map(c => c.ym));
+        const firstRow = accRows.map(t => t.date).sort()[0] || null;
+        const closed = cycles.filter(c => today > c.closeDate && dayNum(today) - dayNum(c.closeDate) <= 70).sort((a, b) => b.closeDate.localeCompare(a.closeDate));
+        closed.forEach((c, i) => {
+          if (covered.has(c.ym)) return;
+          // older cycles only when the card already has data from before them (a hole), never before the first import
+          if (i > 0 && !(firstRow && firstRow < c.start)) return;
+          const late = c.dueDate && today > c.dueDate;
+          push({ id: 'fatura_fechou:' + acc.id + ':' + c.ym, accountId: acc.id, kind: 'fatura_fechou', severity: 'warning', cycle: c, date: c.closeDate,
+            title: 'Fatura de ' + name + ' fechou em ' + brDM(c.closeDate), short: 'Fatura fechou em ' + brDM(c.closeDate),
+            detail: 'Importe a fatura' + (c.dueDate ? ' (' + (late ? 'venceu' : 'vence') + ' ' + brDM(c.dueDate) + ')' : '') + ' — compras de ' + brDM(c.start) + ' a ' + brDM(c.end) + '.',
+            action: { type: 'import', label: 'Importar agora', accountId: acc.id } });
+        });
+        if (acc.dueAlert !== false) {
+          for (const c of cycles) {
+            if (!c.dueDate || today <= c.closeDate || c.dueDate < today || dayNum(c.dueDate) - dayNum(today) > 3) continue;
+            const byId = new Map(txs.map(t => [t.id, t]));
+            const paid = txs.some(t => t.kind === 'card_payment' && t.amount < 0 && t.date >= c.closeDate && t.date <= addDays(c.dueDate, 3) &&
+              (() => { const o = t.linkedTo && byId.get(t.linkedTo); return !o || o.accountId === acc.id; })());
+            if (paid) continue;
+            const n = dayNum(c.dueDate) - dayNum(today);
+            push({ id: 'fatura_vence:' + acc.id + ':' + c.ym, accountId: acc.id, kind: 'fatura_vence', severity: 'info', cycle: c, date: c.dueDate,
+              title: 'Fatura de ' + name + ' vence ' + (n === 0 ? 'hoje' : n === 1 ? 'amanhã' : 'em ' + n + ' dias') + ' (' + brDM(c.dueDate) + ')',
+              short: 'Fatura vence ' + (n === 0 ? 'hoje' : n === 1 ? 'amanhã' : 'em ' + brDM(c.dueDate)),
+              detail: 'Ainda não apareceu o pagamento dela em nenhum extrato importado. Se já pagou, ignore este lembrete.',
+              action: covered.has(c.ym) ? null : { type: 'import', label: 'Importar agora', accountId: acc.id } });
+          }
+        }
+        continue;
+      }
+      const r = remindOf(acc);
+      if (!r || r.freq === 'never') continue;
+      const mineG = groups.filter(g => g.accountId === acc.id);
+      const last = [accRows.map(t => t.date).sort().pop(), ...mineG.map(g => g.coverTo)].filter(Boolean).sort().pop() || null;
+      const due = remindDue(r, last, today);
+      if (!due) continue;
+      const ago = last ? dayNum(today) - dayNum(last) : null;
+      push({ id: 'extrato_desatualizado:' + acc.id + ':' + due, accountId: acc.id, kind: 'extrato_desatualizado', severity: 'warning', date: due,
+        cycle: { key: due, last },
+        title: 'Extrato de ' + name + ' desatualizado', short: 'Extrato desatualizado',
+        detail: (last ? 'Os dados vão até ' + brDM(last) + (ago > 1 ? ' (há ' + ago + ' dias)' : '') + '. ' : 'Nenhum extrato importado ainda. ') +
+          'Você pediu para lembrar ' + FREQ_TXT[r.freq] + (r.freq === 'monthly' ? ' (dia ' + (r.day || 1) + ')' : '') + ': importe o extrato novo.',
+        action: { type: 'import', label: 'Importar agora', accountId: acc.id } });
+    }
+    const rank = { warning: 0, info: 1 }, kr = { fatura_fechou: 0, extrato_desatualizado: 1, fatura_vence: 2, configurar: 3 };
+    out.sort((a, b) => rank[a.severity] - rank[b.severity] || kr[a.kind] - kr[b.kind] || String(a.date).localeCompare(String(b.date)) || a.id.localeCompare(b.id));
+    return out;
+  }
+  /** the data-health "c" checks with configured cards: the card + cycle whose due date is nearest the payment (≤ 12 days) */
+  function paymentCycle(p, cards) {
+    let best = null;
+    for (const acc of cards) {
+      for (const c of cardCycles(acc, { from: addDays(p.date, -45), to: addDays(p.date, 45) })) {
+        if (!c.dueDate) continue;
+        const d = Math.abs(dayNum(p.date) - dayNum(c.dueDate));
+        if (d <= 12 && (!best || d < best.d)) best = { acc, c, d };
+      }
+    }
+    return best;
+  }
+
+  // ---------------------------------------------------------------------------
   // AI prompt + validation
   // ---------------------------------------------------------------------------
   function buildAIPrompt(analysis) {
@@ -3358,7 +3625,7 @@
 
   // ---------------------------------------------------------------------------
   const FinEngine = {
-    version: '2.2.0',
+    version: '2.3.0',
     decodeBytes, analyzeTable, analyzeRows, profileFromAnalysis, applyProfile, matchProfile,
     parseAmount, detectNumberFormat, parseDate, normalizeDescription,
     DEFAULT_CATEGORIES, DEFAULT_DICTIONARY,
@@ -3374,6 +3641,8 @@
     carryover, dataHealth, blockingMonths, importKind, monthName, filePeriod,
     // v2.2
     NAO_ID, ensureBuiltinCategories, periodOf, categorySeries, categorySeriesKey, ingest, batchOrder, importBatch,
+    // v2.3
+    cardCycles, updateAlerts, inferCardDays, fileDates, cycleOfImport,
     lookupDictionaryEntry: (d, m, r, a) => lookupDictionaryEntry(d || DEFAULT_DICTIONARY, m, r, a),
     // extras (helpers, stable but not part of the contract)
     _internal: { parseDelimited, detectDelimiter, detectDateFormat, norm, stripAccents, hashStr, SKIP_PATTERNS, parseInstallmentText, detectKind }

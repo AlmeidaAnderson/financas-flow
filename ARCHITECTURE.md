@@ -96,3 +96,30 @@ The "local" adapter (localStorage) is used for dev, tests and when not signed in
 - `ensureBuiltinCategories` adds a group of its own (`outros_gastos`) when the user's "outros" group is income/investment;
   "Não sei o que é" always sets kind `expense`.
 
+
+## v2.3 additions — update alerts ("Alertas de atualização")
+- **Accounts meta doc**, per account (all optional; absent = not configured, old accounts stay untouched; every change
+  stamps the account's `updatedAt`, so a concurrent edit on two devices resolves to the newest account as a unit):
+  `closingDay` (1–31), `dueDay` (1–31), `dueAlert: false` (turns off the "vence em N dias" reminder), `alerts` (false =
+  no alerts for the account), `remind: { freq: weekly|biweekly|monthly|never, day? }` (checking/savings/other),
+  `cycleOverrides: { "YYYY-MM": "YYYY-MM-DD" }` (one cycle closed on another date; key = month of the usual closing).
+- **settings.dismissedAlerts: [alertId]** (synced) — "Já importei / Ignorar este ciclo". Alert ids are stable per account
+  + cycle (`fatura_fechou:<acc>:<YYYY-MM>`, `fatura_vence:<acc>:<YYYY-MM>`, `extrato_desatualizado:<acc>:<reminder date>`,
+  `configurar:<acc>`), so a dismissal covers one cycle only.
+- Engine: `cardCycles(account, {from, to})` → `[{ym, closeDate, dueDate, start, end, nominalClose, overridden}]`
+  (day clamped to the month's last day; start = previous closeDate, end = closeDate − 1; dueDate = first dueDay after the
+  nominal closing day; overrides move closeDate, never the due date). `updateAlerts({accounts, imports, transactions,
+  today, settings})` → alerts `{id, accountId, kind, severity, title, short, detail, cycle, date, action}`; a fatura
+  import covers a cycle when its file-name date (`fileDates`) is the cycle's due date (±3 days) or its purchases reach the
+  cycle's last days (`cycleOfImport`; extratos never count). `inferCardDays({accountId, accounts, transactions, imports})`
+  ("Sugerir pelos dados": closing day = most frequent first-purchase day / day after the last purchase of each fatura;
+  due day = the date in the fatura file names, else the usual day of the fatura payments) — the UI only pre-fills.
+- dataHealth "c" (payment ↔ fatura): when the card has closing + due day, each payment is matched to the cycle whose due
+  date is nearest (≤ 12 days) — only for the card it is linked to / sits in, or when every card account is configured —
+  and the "sem a fatura" / "não bate" texts name the due date and purchase period. Without configured cards the old
+  date-window logic runs unchanged.
+- App: bell + count in the header (every tab, real data only), the most urgent alert as one line under the sticky period
+  bar on the Painel, the "Alertas" sheet (Importar agora → Importar with the account pre-selected, Fechou em outra data
+  with the dd/mm/aaaa field, Ignorar este ciclo, Configurar conta), "Alertas de atualização" per account in Contas e
+  importações. Recomputed after every commit and when the device's date changes (memo key = data version + local date).
+  No browser notifications.

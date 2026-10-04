@@ -422,7 +422,7 @@ let _deferRender = false;
 /** Re-render everything that depends on data. remote=true: keep what the user is typing (open editor, inputs). */
 function renderAfterChange(first, remote) {
   if (first) pickMonth(true);
-  renderStorePill(); renderBanner(); renderBadge();
+  renderStorePill(); renderBanner(); renderBadge(); renderAlertsBell();
   try { health(); refreshOpenSheet(); } catch (e) { console.error(e); }
   if (remote) {
     const ae = document.activeElement;
@@ -513,6 +513,7 @@ function renderPainel() {
         ${[1, 3, 6, 12].map(r => `<button type="button" data-act="range" data-r="${r}" aria-pressed="${S.ui.range === r}">${r === 1 ? 'Mês' : r + 'm'}</button>`).join('')}
       </div>
     </div>
+    ${alertLineHTML()}
     <div class="kpis" role="list">
       <div class="kpi" role="listitem"><span class="eyebrow">Entradas</span><span class="v money in" id="kpi-income" data-cents="${inc}">${brl(inc)}</span></div>
       <div class="kpi" role="listitem"><span class="eyebrow">Saídas</span><span class="v money out" id="kpi-expense" data-cents="${exp}">${brl(exp)}</span></div>
@@ -765,6 +766,7 @@ function refreshOpenSheet(){
   if(S.sheet.kind==='health') renderHealthSheet();
   else if(S.sheet.kind==='carry') renderCarrySheet();
   else if(S.sheet.kind==='month') renderMonthMenu();
+  else if(S.sheet.kind==='alerts') renderAlertsSheet();
   else if(S.sheet.kind==='settings'){ const el = $('#carry-set'); if(el) el.innerHTML = carrySettingsHTML(); }
 }
 function warningById(id){ return health().find(w=>w.id===id) || null; }
@@ -887,6 +889,202 @@ function carrySettingsHTML(){
     <span class="xs muted">Automático: o primeiro mês sem aviso que bloqueia em Saúde dos dados.</span></div>
     ${ci.enabled&&ms.length?`<div class="carry-months" id="carry-months">${ms.slice().reverse().map(m=>{ const why = monthExcludedReason(ci, m); const on = ci.manual.has(m) || (ci.auto[m] && !ci.included.has(m));
       return `<label class="switch sm"><input type="checkbox" data-carryx="${esc(m)}" ${on?'checked':''}><span>${esc(fmtYm(m))} — incompleto, não transportar${why?` <span class="xs muted">(${esc(why)})</span>`:ci.auto[m]?' <span class="xs muted">(incluído manualmente)</span>':''}</span></label>`; }).join('')}</div>`:''}`;
+}
+
+/* ---------- v2.3: update alerts (bell in the header, Painel line, sheet, per-account settings) ---------- */
+const AL_KIND = { fatura_fechou: ['Fatura fechou', 'warn'], fatura_vence: ['Vencimento', 'acc'], extrato_desatualizado: ['Extrato', 'warn'], configurar: ['Configurar', 'acc'] };
+const FREQ_LBL = [['never', 'Nunca'], ['weekly', 'Toda semana'], ['biweekly', 'A cada 15 dias'], ['monthly', 'Todo mês']];
+let _alMemo = { key: null, list: [] };
+/** open alerts (dismissed ones left out by the engine); recomputed when the data or the device's date changes */
+function alerts() {
+  if (S.mode !== 'real' || !S.real) return [];
+  const today = todayISO();
+  const k = memoKey() + '|' + today;
+  if (_alMemo.key === k) return _alMemo.list;
+  const d = D();
+  const list = eng('updateAlerts', { accounts: d.accounts || [], imports: d.imports || {}, transactions: live(), today, settings: d.settings || {} }) || [];
+  _alMemo = { key: k, list };
+  return list;
+}
+function renderAlertsBell() {
+  const b = $('#btn-alerts'); if (!b) return;
+  S._alDay = todayISO();
+  const on = S.booted && S.mode === 'real' && !signedOut();
+  b.hidden = !on;
+  const list = on ? alerts() : [];
+  const n = list.length;
+  const badge = $('#alerts-badge');
+  if (badge) { badge.textContent = n > 9 ? '9+' : String(n); badge.hidden = !n; }
+  b.dataset.count = String(n);
+  b.dataset.sev = n ? list[0].severity : '';
+  b.setAttribute('aria-label', n ? 'Alertas de atualização: ' + n + ' aberto' + (n > 1 ? 's' : '') : 'Alertas de atualização: nenhum');
+}
+/** the most urgent alert, one line at the top of the Painel (under the sticky period bar) */
+function alertLineHTML() {
+  const list = alerts(); if (!list.length) return '';
+  const a = list[0];
+  return `<div class="al-line sev-${esc(a.severity)}" id="alert-line" data-aid="${esc(a.id)}">
+    <button type="button" class="al-line-main" data-act="alerts"><span class="al-dot" aria-hidden="true"></span><span class="al-txt" title="${esc(a.title)}"><span class="al-lead">${esc(a.short || a.title)}</span>${a.short && a.accountId ? `<span class="al-rest">&nbsp;· ${esc(accName(a.accountId))}</span>` : ''}</span>${list.length > 1 ? `<span class="al-more" aria-label="mais ${list.length - 1}">+${list.length - 1}</span>` : ''}</button>
+    ${a.action && a.action.type === 'import' ? `<button class="btn sm" type="button" data-act="al-import" data-id="${esc(a.id)}" id="alert-line-import">Importar</button>` : ''}</div>`;
+}
+function alertById(id) { return alerts().find(a => a.id === id) || null; }
+function openAlertsSheet() {
+  S.alertUI = { other: null, err: '' };
+  openSheet('<span class="eyebrow">Alertas</span><h2>Dados novos para importar</h2>', '<div id="alerts-body"></div>', () => { S.alertUI = null; }, { kind: 'alerts', label: 'Alertas de atualização' });
+  renderAlertsSheet();
+}
+function renderAlertsSheet() {
+  const el = $('#alerts-body'); if (!el) return;
+  const U = S.alertUI || (S.alertUI = { other: null, err: '' });
+  const list = alerts();
+  const nDis = (settingsObj().dismissedAlerts || []).length;
+  const card = a => {
+    const [lbl, cls] = AL_KIND[a.kind] || ['Alerta', 'acc'];
+    const other = U.other === a.id && a.cycle;
+    const dis = a.kind === 'configurar' ? 'Agora não' : a.kind === 'fatura_fechou' ? 'Já importei / Ignorar este ciclo' : 'Ignorar este ciclo';
+    return `<div class="hw al sev-${esc(a.severity)}" data-aid="${esc(a.id)}" data-kind="${esc(a.kind)}">
+      <div class="hw-top"><span class="tag ${cls}">${esc(lbl)}</span>${a.accountId ? `<span class="tag">${esc(accName(a.accountId))}</span>` : ''}</div>
+      <b class="hw-t">${esc(a.title)}</b><p class="small muted">${esc(a.detail)}</p>
+      ${other ? `<div class="newcat" id="al-other-box">${dateField('al-other-date', a.cycle.closeDate, 'Data em que esta fatura fechou')}
+        <p class="xs muted">Só para este ciclo (o normal é dia ${esc(String(+a.cycle.nominalClose.slice(8, 10)))}). As compras a partir dessa data ficam para a próxima fatura.</p>
+        ${U.err ? `<span class="xs err-msg" id="al-other-err">${esc(U.err)}</span>` : ''}
+        <div class="row end"><button class="btn sm" type="button" data-act="al-other-cancel">Cancelar</button><button class="btn sm primary" type="button" data-act="al-other-save" data-id="${esc(a.id)}" id="al-other-save">Salvar data</button></div></div>` : ''}
+      <div class="row">
+        ${a.action && a.action.type === 'import' ? `<button class="btn sm primary" type="button" data-act="al-import" data-id="${esc(a.id)}">Importar agora</button>` : ''}
+        ${a.kind === 'configurar' ? `<button class="btn sm primary" type="button" data-act="al-config" data-acc="${esc(a.accountId)}">Configurar conta</button>` : ''}
+        ${a.kind === 'fatura_fechou' && !other ? `<button class="btn sm" type="button" data-act="al-other" data-id="${esc(a.id)}">Fechou em outra data</button>` : ''}
+        <button class="btn sm ghost" type="button" data-act="al-dismiss" data-id="${esc(a.id)}">${dis}</button>
+        ${a.kind !== 'configurar' ? `<button class="btn sm ghost" type="button" data-act="al-config" data-acc="${esc(a.accountId)}">Configurar conta</button>` : ''}
+      </div></div>`;
+  };
+  el.innerHTML = `<p class="small muted">Avisos de quando há extrato ou fatura nova para importar, pelo dia de fechamento de cada cartão e pelo lembrete de cada conta (Ajustes → Contas e importações).</p>
+    ${list.length ? `<div class="hw-group" id="alerts-list">${list.map(card).join('')}</div>`
+      : `<div class="empty" id="alerts-empty"><b>Nada para importar agora.</b><span class="small">Quando uma fatura fechar ou um extrato ficar desatualizado, aparece aqui.</span></div>`}
+    <div class="row"><button class="btn sm" type="button" data-act="accounts">Configurar contas</button>${nDis ? `<button class="btn sm ghost" type="button" data-act="al-undismiss" id="al-undismiss">Mostrar ${nDis} alerta${nDis > 1 ? 's' : ''} ignorado${nDis > 1 ? 's' : ''}</button>` : ''}</div>`;
+}
+function alertImport(id) {
+  const a = alertById(id);
+  const accId = a && a.accountId;
+  closeSheet();
+  if ($('#triage-root').innerHTML) stopTriage();
+  S.imp = newImp();
+  if (accId && (D().accounts || []).some(x => x.id === accId)) {
+    S.imp.accountId = accId; S.imp.fromAlert = accId;
+    S.imp.alertNote = a.kind === 'extrato_desatualizado' ? 'Extrato novo de ' + accName(accId) + (a.cycle && a.cycle.last ? ', a partir de ' + isoToBR(a.cycle.last) : '') + '.'
+      : a.cycle ? 'Fatura de ' + accName(accId) + (a.cycle.dueDate ? ' com vencimento em ' + isoToBR(a.cycle.dueDate) : '') + ' — compras de ' + isoToDM(a.cycle.start) + ' a ' + isoToDM(a.cycle.end) + '.' : '';
+  }
+  setTab('import');
+}
+function alertDismiss(id) {
+  updateSettings(st => { st.dismissedAlerts = (st.dismissedAlerts || []).filter(x => x !== id).concat([id]).slice(-300); });
+  toast('Alerta ignorado neste ciclo.');
+}
+function alertOtherSave(id) {
+  const a = alertById(id); if (!a || !a.cycle) return;
+  const U = S.alertUI || {};
+  const iso = readDateField('al-other-date', true);
+  if (!iso) { U.err = 'Data inválida. Use dd/mm/aaaa.'; renderAlertsSheet(); return; }
+  const dist = Math.abs((Date.parse(iso) - Date.parse(a.cycle.nominalClose)) / 864e5);
+  if (dist > 20) { U.err = 'Escolha uma data perto de ' + isoToBR(a.cycle.nominalClose) + ' (até 20 dias antes ou depois).'; renderAlertsSheet(); return; }
+  const acc = (D().accounts || []).find(x => x.id === a.accountId); if (!acc) return;
+  const ov = Object.assign({}, acc.cycleOverrides || {});
+  if (iso === a.cycle.nominalClose) delete ov[a.cycle.ym]; else ov[a.cycle.ym] = iso;
+  acc.cycleOverrides = ov; acc.updatedAt = nowISO();
+  U.other = null; U.err = '';
+  commit({ meta: ['accounts'] });
+  toast('Esta fatura de ' + acc.name + ' fechou em ' + isoToBR(iso) + '.');
+}
+function alertConfig(accId) {
+  closeSheet(); openAccountsSheet();
+  S.accUI.cfg = accId; renderAccountsSheet();
+  const box = $('#acc-al-' + CSS.escape(accId)); if (box) box.scrollIntoView({ block: 'start' });
+}
+/* --- per-account settings (accounts sheet) --- */
+function alDraft(a) {
+  const U = S.accUI || (S.accUI = { move: null, del: null });
+  U.draft = U.draft || {};
+  if (!U.draft[a.id]) {
+    const r = a.remind || {};
+    U.draft[a.id] = { alerts: a.alerts !== false, closingDay: a.closingDay ? String(a.closingDay) : '', dueDay: a.dueDay ? String(a.dueDay) : '', dueAlert: a.dueAlert !== false,
+      freq: ['weekly', 'biweekly', 'monthly', 'never'].includes(r.freq) ? r.freq : 'never', day: r.day ? String(r.day) : '', suggest: null, err: '' };
+  }
+  return U.draft[a.id];
+}
+function alSummary(a) {
+  if (a.alerts === false) return ['alertas desligados', ''];
+  if (a.type === 'credit_card') return a.closingDay ? ['fecha dia ' + a.closingDay + (a.dueDay ? ' · vence dia ' + a.dueDay : ''), 'ok'] : ['sem dia de fechamento', 'warn'];
+  const r = a.remind || {};
+  if (!r.freq || r.freq === 'never') return ['sem lembrete', ''];
+  return [r.freq === 'monthly' ? 'lembrar todo dia ' + (r.day || 1) : r.freq === 'weekly' ? 'lembrar toda semana' : 'lembrar a cada 15 dias', 'ok'];
+}
+function alSettingsHTML(a) {
+  if (a.type === 'payslip') return '';
+  const U = S.accUI || {};
+  const dr = alDraft(a); const id = esc(a.id);
+  const [sum, sc] = alSummary(a);
+  const isCard = a.type === 'credit_card';
+  const ovs = Object.entries(a.cycleOverrides || {}).filter(([, v]) => v).sort((x, y) => y[0].localeCompare(x[0])).slice(0, 6);
+  const sug = dr.suggest;
+  return `<details class="acc-al" id="acc-al-${id}" data-accal="${id}" ${U.cfg === a.id || (U.open && U.open[a.id]) ? 'open' : ''}><summary><span>Alertas de atualização</span><span class="tag ${sc}">${esc(sum)}</span></summary>
+    <div class="acc-al-body">
+      <label class="switch sm"><input type="checkbox" id="al-on-${id}" data-alf="alerts" data-acc="${id}" ${dr.alerts ? 'checked' : ''}>Avisar quando houver dados novos para importar</label>
+      ${isCard ? `<div class="form-grid al-days">
+          <div class="field"><label for="al-close-${id}">Dia de fechamento</label><input type="number" inputmode="numeric" min="1" max="31" step="1" id="al-close-${id}" data-alf="closingDay" data-acc="${id}" value="${esc(dr.closingDay)}" placeholder="1–31"></div>
+          <div class="field"><label for="al-due-${id}">Dia de vencimento</label><input type="number" inputmode="numeric" min="1" max="31" step="1" id="al-due-${id}" data-alf="dueDay" data-acc="${id}" value="${esc(dr.dueDay)}" placeholder="1–31"></div></div>
+        <p class="xs muted">Num mês sem esse dia (31 em fevereiro, por exemplo), vale o último dia do mês. Se o banco fechar em outra data num mês, ajuste pelo próprio alerta ("Fechou em outra data").</p>
+        <label class="switch sm"><input type="checkbox" id="al-duealert-${id}" data-alf="dueAlert" data-acc="${id}" ${dr.dueAlert ? 'checked' : ''}>Lembrar 3 dias antes do vencimento se o pagamento ainda não apareceu no extrato</label>
+        ${sug ? (sug.closingDay || sug.dueDay ? `<div class="banner al-sug" id="al-sug-${id}"><div class="grow"><b>Sugestão pelos seus dados:</b> ${[sug.closingDay ? 'fechamento dia ' + sug.closingDay : '', sug.dueDay ? 'vencimento dia ' + sug.dueDay : ''].filter(Boolean).join(', ')}. Os campos acima foram preenchidos: confira e toque em <b>Salvar</b>.<ul class="xs">${sug.basis.map(b => `<li>${esc(b)}</li>`).join('')}</ul></div></div>`
+          : `<div class="banner al-sug" id="al-sug-${id}"><div class="grow">Não deu para sugerir: importe pelo menos uma fatura deste cartão (ou preencha os dias da sua fatura).</div></div>`) : ''}
+        ${ovs.length ? `<div class="al-ovs"><span class="xs muted">Fechamentos em outra data:</span>${ovs.map(([ym, d]) => `<span class="tag">${esc(isoToBR(d))} <button type="button" class="al-x" data-act="al-ov-del" data-acc="${id}" data-ym="${esc(ym)}" aria-label="Voltar ao dia normal no ciclo de ${esc(fmtYm(ym))}">×</button></span>`).join('')}</div>` : ''}`
+      : `<div class="form-grid al-days rem">
+          <div class="field"><label for="al-freq-${id}">Lembrar de atualizar</label><select id="al-freq-${id}" data-alf="freq" data-acc="${id}">${FREQ_LBL.map(([k, v]) => `<option value="${k}" ${dr.freq === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+          <div class="field" ${dr.freq === 'monthly' ? '' : 'hidden'} id="al-dayf-${id}"><label for="al-day-${id}">Dia do mês</label><input type="number" inputmode="numeric" min="1" max="31" step="1" id="al-day-${id}" data-alf="day" data-acc="${id}" value="${esc(dr.day)}" placeholder="1–31"></div></div>
+        <p class="xs muted">O alerta aparece quando o último extrato importado ficar mais velho que isso.</p>`}
+      <span class="xs err-msg" id="al-err-${id}" ${dr.err ? '' : 'hidden'}>${esc(dr.err)}</span>
+      <div class="row">${isCard ? `<button class="btn sm" type="button" data-act="al-suggest" data-acc="${id}" id="al-suggest-${id}">Sugerir pelos dados</button>` : ''}<span class="grow"></span><button class="btn sm primary" type="button" data-act="al-save" data-acc="${id}" id="al-save-${id}">Salvar</button></div>
+    </div></details>`;
+}
+function alSuggest(accId) {
+  const a = (D().accounts || []).find(x => x.id === accId); if (!a) return;
+  const dr = alDraft(a);
+  const r = eng('inferCardDays', { accountId: accId, accounts: D().accounts || [], transactions: live(), imports: D().imports || {} }) || { closingDay: null, dueDay: null, basis: [] };
+  dr.suggest = r; dr.err = '';
+  if (r.closingDay) dr.closingDay = String(r.closingDay);
+  if (r.dueDay) dr.dueDay = String(r.dueDay);
+  S.accUI.cfg = accId;
+  renderAccountsSheet();
+}
+function alSave(accId) {
+  const a = (D().accounts || []).find(x => x.id === accId); if (!a) return;
+  const dr = alDraft(a);
+  const day = v => { const s = String(v == null ? '' : v).trim(); if (!s) return ''; const n = Number(s); return Number.isInteger(n) && n >= 1 && n <= 31 ? n : null; };
+  const fail = m => { dr.err = m; S.accUI.cfg = accId; renderAccountsSheet(); };
+  if (a.type === 'credit_card') {
+    const cd = day(dr.closingDay), dd = day(dr.dueDay);
+    if (cd === null || dd === null) return fail('Use um dia entre 1 e 31.');
+    if (dd && !cd) return fail('Informe também o dia de fechamento.');
+    if (cd) a.closingDay = cd; else delete a.closingDay;
+    if (dd) a.dueDay = dd; else delete a.dueDay;
+    if (dr.dueAlert) delete a.dueAlert; else a.dueAlert = false;
+  } else {
+    const d = day(dr.day);
+    if (dr.freq === 'monthly' && !d) return fail('Escolha o dia do mês (1 a 31).');
+    a.remind = dr.freq === 'monthly' ? { freq: 'monthly', day: d } : { freq: dr.freq };
+  }
+  a.alerts = !!dr.alerts;
+  a.updatedAt = nowISO();
+  delete S.accUI.draft[accId];
+  S.accUI.cfg = accId;
+  commit({ meta: ['accounts'] });
+  toast('Alertas de ' + a.name + ' salvos.');
+}
+function alInput(t) {
+  const a = (D().accounts || []).find(x => x.id === t.dataset.acc); if (!a) return;
+  const dr = alDraft(a);
+  const f = t.dataset.alf;
+  dr[f] = t.type === 'checkbox' ? t.checked : t.value;
+  dr.err = '';
+  if (f === 'freq') { const box = $('#al-dayf-' + CSS.escape(a.id)); if (box) box.hidden = t.value !== 'monthly'; }
 }
 
 /* ---------- budget ---------- */
@@ -2000,6 +2198,7 @@ function renderStep1(b){
   b.innerHTML = `
     <div class="card">
       <h3>De qual conta é este arquivo?</h3>
+      ${I.alertNote ? `<p class="small al-note" id="imp-alert-note">${esc(I.alertNote)}</p>` : ''}
       <p class="xs muted">Vários arquivos de uma vez? Escolha todos abaixo: a conta é escolhida em cada um.</p>
       <div class="field"><label for="imp-acc">Conta</label>${accountSelect('imp-acc', I.accountId)}</div>
       <div class="form-grid" ${I.accountId==='__new'?'':'hidden'} id="new-acc">
@@ -2381,6 +2580,8 @@ function suggestAccount(it) {
     if (right) return { id: right.id, note: { from: cands[0].id, to: right.id } };
     return { id: cands[0].id, note: null };
   }
+  const pref = S.imp && S.imp.fromAlert ? byId(S.imp.fromAlert) : null; // "Importar agora" from an alert
+  if (pref && fits(pref)) return { id: pref.id, note: null };
   return { id: '', note: null };
 }
 const bfReadyLayout = it => !!(it.profile && (it.matched || it.configured));
@@ -3033,7 +3234,7 @@ function renderAccountsSheet() {
     <div class="card"><h3>Contas</h3>
       ${accs.length ? accs.map(a => `<div class="acc-row" data-acc="${esc(a.id)}">
         <div class="field"><label for="acc-name-${esc(a.id)}">Nome <span class="faint">· ${nBy[a.id] || 0} lançamentos</span></label><input type="text" id="acc-name-${esc(a.id)}" data-accname="${esc(a.id)}" value="${esc(a.name)}"></div>
-        <div class="field"><label for="acc-type-${esc(a.id)}">Tipo</label><select id="acc-type-${esc(a.id)}" data-acctype="${esc(a.id)}">${Object.entries(ACC_TYPES).map(([k, v]) => `<option value="${k}" ${a.type === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div></div>`).join('')
+        <div class="field"><label for="acc-type-${esc(a.id)}">Tipo</label><select id="acc-type-${esc(a.id)}" data-acctype="${esc(a.id)}">${Object.entries(ACC_TYPES).map(([k, v]) => `<option value="${k}" ${a.type === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>${alSettingsHTML(a)}</div>`).join('')
       : '<p class="small muted">Nenhuma conta ainda. Elas são criadas ao importar um extrato.</p>'}
       <p class="xs muted">Trocar o tipo recalcula entradas, estornos e pagamentos de fatura dessa conta. Categorias manuais são mantidas.</p>
     </div>
@@ -3085,7 +3286,7 @@ function deleteImport(impId) {
 function changeAccountType(accId, type) {
   const d = D();
   const a = d.accounts.find(x => x.id === accId); if (!a || a.type === type) return;
-  a.type = type;
+  a.type = type; a.updatedAt = nowISO();
   let txs = d.txs;
   const imps = [...new Set(live().filter(t => t.accountId === accId).map(t => t.importId))];
   for (const imp of imps) txs = eng('moveImport', txs, imp, accId, Object.assign(ctx(), { accounts: d.accounts })) || txs;
@@ -3210,6 +3411,17 @@ const ACT = {
   'hw-undismiss': () => { updateSettings(st => { st.dismissedWarnings = []; }); },
   carry: () => openCarrySheet(),
   'month-menu': () => openMonthMenu(),
+  alerts: () => { if ($('#triage-root').innerHTML) return; openAlertsSheet(); },
+  'al-import': el => alertImport(el.dataset.id),
+  'al-dismiss': el => alertDismiss(el.dataset.id),
+  'al-other': el => { S.alertUI = Object.assign(S.alertUI || {}, { other: el.dataset.id, err: '' }); renderAlertsSheet(); const i = $('#al-other-date'); if (i) i.focus(); },
+  'al-other-cancel': () => { if (S.alertUI) { S.alertUI.other = null; S.alertUI.err = ''; } renderAlertsSheet(); },
+  'al-other-save': el => alertOtherSave(el.dataset.id),
+  'al-config': el => alertConfig(el.dataset.acc),
+  'al-undismiss': () => { updateSettings(st => { st.dismissedAlerts = []; }); },
+  'al-suggest': el => alSuggest(el.dataset.acc),
+  'al-save': el => alSave(el.dataset.acc),
+  'al-ov-del': el => { const a = (D().accounts || []).find(x => x.id === el.dataset.acc); if (!a || !a.cycleOverrides) return; const ov = Object.assign({}, a.cycleOverrides); delete ov[el.dataset.ym]; a.cycleOverrides = ov; a.updatedAt = nowISO(); S.accUI.cfg = a.id; commit({ meta: ['accounts'] }); toast('Fechamento voltou ao dia normal nesse ciclo.'); },
   'cc-gran': el => ccSet({ gran: el.dataset.v }),
   'cc-level': el => {
     if (el.dataset.v === 'group') { ccSet({ level: 'group', groupId: null }); return; }
@@ -3262,6 +3474,7 @@ document.addEventListener('input', ev => {
     return;
   }
   if (t.dataset && t.dataset.cnae) { renderCnaeSuggestion(t.dataset.cnae, t.value); return; }
+  if (t.dataset && t.dataset.alf) { alInput(t); return; }
   if (t.id === 'tx-search') { clearTimeout(searchT); searchT = setTimeout(() => { S.ui.q = t.value; S.ui.txLimit = 200; saveTxPrefs(); renderTxList(); }, 150); }
   else if (t.id === 'imp-check') { S.imp.checksum = t.value; clearTimeout(searchT); searchT = setTimeout(() => { renderImport(); const i = $('#imp-check'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 500); }
   else if (t.id === 'hol-net') { S.imp.hol.net = t.value; S.imp.hol.netTouched = t.value.trim() !== ''; const sp = $('#hol-split'); if (sp) sp.innerHTML = holSplitHTML(S.imp.hol); }
@@ -3295,6 +3508,7 @@ document.addEventListener('change', ev => {
       if (t.id === 'ed-cat' && t.value) { const k = kindFor(t.value); const ks = $('#ed-kind'); const cur = txById(((S.sheet || {}).id) || ''); if (k && ks && (!cur || countable(cur))) ks.value = k; const rb = $('#ed-remember'); if (rb && cur) rb.checked = rememberDefault(cur, t.value); }
       return;
     }
+    if (t.dataset && t.dataset.alf) { alInput(t); return; }
     if (t.dataset && t.dataset.ncgroup) { const ng = $('#' + t.dataset.ncgroup + '-nc-ng'); if (ng) ng.hidden = t.value !== '__newgroup'; return; }
     if (t.id === 'tri-remember') { TRI.remember = t.checked; TRI.touched = true; return; }
     if (t.id === 'cc-type') { ccSet({ type: t.value }); return; }
@@ -3309,7 +3523,7 @@ document.addEventListener('change', ev => {
     if (t.dataset && t.dataset.bfname) { const it = bfItem(t.dataset.bfname); if (it) { it.newAcc.name = t.value; bfRefresh(); } return; }
     if (t.id === 'imp-file' && t.files && t.files.length) { const fs = Array.from(t.files); t.value = ''; handleFiles(fs); }
     else if (t.id === 'restore-file' && t.files && t.files[0]) readBackup(t.files[0]);
-    else if (t.id === 'imp-acc') { S.imp.accountId = t.value; $('#new-acc').hidden = t.value !== '__new'; }
+    else if (t.id === 'imp-acc') { S.imp.accountId = t.value; $('#new-acc').hidden = t.value !== '__new'; const an = $('#imp-alert-note'); if (an) an.hidden = t.value !== S.imp.fromAlert; }
     else if (t.id === 'imp-acc-type') { S.imp.newAcc.type = t.value; }
     else if (t.dataset && t.dataset.col != null && t.id.startsWith('imp-col-')) setColumnRole(+t.dataset.col, t.value);
     else if (t.id === 'imp-sign') { S.imp.profile.signConvention = t.value; runPreview(); renderImport(); }
@@ -3317,7 +3531,7 @@ document.addEventListener('change', ev => {
     else if (t.id === 'hol-emp' || (t.dataset && t.dataset.od != null)) { readHolerite(); }
     else if (t.id === 'mv-acc') { if (S.accUI && S.accUI.move) S.accUI.move.to = t.value; const nb = $('#mv-new'); if (nb) nb.hidden = t.value !== '__new'; }
     else if (t.id === 'mv-type') { if (S.accUI && S.accUI.move) S.accUI.move.type = t.value; }
-    else if (t.dataset && t.dataset.accname) { const a = D().accounts.find(x => x.id === t.dataset.accname); if (a && t.value.trim() && a.name !== t.value.trim()) { a.name = t.value.trim(); commit({ meta: ['accounts'] }); toast('Conta renomeada'); } }
+    else if (t.dataset && t.dataset.accname) { const a = D().accounts.find(x => x.id === t.dataset.accname); if (a && t.value.trim() && a.name !== t.value.trim()) { a.name = t.value.trim(); a.updatedAt = nowISO(); commit({ meta: ['accounts'] }); toast('Conta renomeada'); } }
     else if (t.dataset && t.dataset.acctype) changeAccountType(t.dataset.acctype, t.value);
     else if (t.dataset && t.dataset.gname) { const g = D().categories.find(x => x.id === t.dataset.gname); if (g && t.value.trim()) { g.name = t.value.trim(); S.ui.openGroup = g.id; commit({ meta: ['categories'], render: false }); renderBadge(); } }
     else if (t.dataset && t.dataset.gcolor) { const g = D().categories.find(x => x.id === t.dataset.gcolor); if (g) { g.color = t.value; S.ui.openGroup = g.id; commit({ meta: ['categories'] }); } }
@@ -3325,7 +3539,11 @@ document.addEventListener('change', ev => {
     else if (t.dataset && t.dataset.gbud) { const v = parseMoney(t.value); const b = D().settings.budgets = D().settings.budgets || {}; if (v) b[t.dataset.gbud] = Math.abs(v); else delete b[t.dataset.gbud]; if (S.mode === 'example') { const ub = S.example.userBudgets = S.example.userBudgets || {}; if (v) ub[t.dataset.gbud] = Math.abs(v); else delete ub[t.dataset.gbud]; } t.value = v ? centsToInput(Math.abs(v)) : ''; commit({ meta: ['settings'], render: false }); }
   } catch (e) { reportErr('Algo deu errado: ' + (e.message || e)); console.error(e); }
 });
-document.addEventListener('toggle', ev => { const d = ev.target; if (d.classList && d.classList.contains('grp') && d.open) S.ui.openGroup = d.dataset.gid; }, true);
+document.addEventListener('toggle', ev => {
+  const d = ev.target;
+  if (d.classList && d.classList.contains('grp') && d.open) S.ui.openGroup = d.dataset.gid;
+  if (d.classList && d.classList.contains('acc-al') && S.accUI) { S.accUI.open = S.accUI.open || {}; S.accUI.open[d.dataset.accal] = d.open; if (!d.open && S.accUI.cfg === d.dataset.accal) S.accUI.cfg = null; }
+}, true);
 document.addEventListener('dragover', ev => { const d = ev.target.closest && ev.target.closest('#drop'); if (d) { ev.preventDefault(); d.classList.add('over'); } });
 document.addEventListener('dragleave', ev => { const d = ev.target.closest && ev.target.closest('#drop'); if (d) d.classList.remove('over'); });
 /* file pickers: arm the "did it open?" check (Android) */
@@ -3414,10 +3632,14 @@ async function boot() {
   S.booted = true;
   if (!signedOut()) await loadFromStore();
   else { S.mode = 'example'; S.ver++; renderAfterChange(true); }
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPersist(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { flushPersist(); return; }
+    // a new day since the last render: the alerts depend on the device's date
+    if (S._alDay && S._alDay !== todayISO() && !$('#triage-root').innerHTML) renderAfterChange(false, true);
+  });
   window.addEventListener('pagehide', () => { flushPersist(); });
 }
 // test hook (read-only views of the state), harmless in production
-window.__ff = { state: () => S, live: () => live(), D: () => D(), period: () => period(), flush: () => flushPersist(), store: () => store, health: () => health(), carry: () => carryInfo() };
+window.__ff = { state: () => S, live: () => live(), D: () => D(), period: () => period(), flush: () => flushPersist(), store: () => store, health: () => health(), carry: () => carryInfo(), alerts: () => alerts() };
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
