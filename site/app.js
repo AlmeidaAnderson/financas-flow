@@ -63,7 +63,7 @@ function toast(msg, err, action) {
     const b = document.createElement('button'); b.type = 'button'; b.className = 't-act'; b.id = 'toast-act'; b.dataset.act = 'toast-act'; b.textContent = action.label;
     t.appendChild(b); toast._act = action.fn;
   }
-  clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; toast._act = null; }, err ? 6000 : action ? 6000 : 2800);
+  clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; toast._act = null; }, err ? 6000 : action ? (action.ms || 6000) : 2800);
 }
 function reportErr(msg) { console.error(msg); const n = Date.now(); if (n - lastErrAt > 1200) { lastErrAt = n; toast(msg, true); } }
 /* every engine call goes through here */
@@ -767,6 +767,7 @@ function refreshOpenSheet(){
   else if(S.sheet.kind==='carry') renderCarrySheet();
   else if(S.sheet.kind==='month') renderMonthMenu();
   else if(S.sheet.kind==='alerts') renderAlertsSheet();
+  else if(S.sheet.kind==='manage') renderManageSheet();
   else if(S.sheet.kind==='settings'){ const el = $('#carry-set'); if(el) el.innerHTML = carrySettingsHTML(); }
 }
 function warningById(id){ return health().find(w=>w.id===id) || null; }
@@ -1638,7 +1639,8 @@ function txRow(t) {
   if (t.note) tags.push('<span class="tag">nota</span>');
   const cls = t.amount > 0 ? 'in' : (t.kind === 'card_payment' || t.kind === 'transfer' ? 'muted' : '');
   const meta = txMetaBits(t);
-  return `<button type="button" class="tx ${unc ? 'uncat' : ''}" data-act="edittx" data-id="${esc(t.id)}">${txIcon(t)}
+  const sel = S.ui.sel;
+  return `<button type="button" class="tx ${unc ? 'uncat' : ''}" ${sel ? `data-act="seltx" aria-pressed="${sel.has(t.id)}"` : 'data-act="edittx"'} data-id="${esc(t.id)}">${sel ? `<span class="ck" aria-hidden="true">${sel.has(t.id) ? '✓' : ''}</span>` : ''}${txIcon(t)}
     <span class="mid"><span class="mer">${esc(t.merchant || t.rawDescription)}</span>${meta.length ? `<span class="meta">${meta.join('<span aria-hidden="true">·</span>')}</span>` : ''}<span class="raw">${esc(t.rawDescription)} · ${esc(accName(t.accountId))}</span><span class="tags">${tags.join('')}</span></span>
     <span class="amt ${cls}">${t.amount > 0 ? '+' : ''}${brl(t.amount)}</span></button>`;
 }
@@ -1729,7 +1731,9 @@ function renderTx() {
       ${n ? '<button type="button" class="btn ghost sm" data-act="filters-clear" id="btn-filters-clear">Limpar</button>' : ''}
       <label class="sr-only" for="tx-sort">Ordenar</label>
       <select id="tx-sort" aria-label="Ordenar">${SORTS.map(([k, v]) => `<option value="${k}" ${S.ui.sort === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
+      ${S.mode === 'real' && !S.ui.sel ? '<button type="button" class="btn sm" data-act="sel-start" id="btn-select">Selecionar</button>' : ''}
     </div>
+    ${selBarHTML()}
     <div id="tx-list"></div>`;
   renderTxList();
 }
@@ -1805,6 +1809,9 @@ function presetRange(k) {
 /* --- v2.1: "não sabe o que é?" — Google, CNPJ and CNAE help (nothing is sent anywhere until the user taps) --- */
 const gUrl = q => 'https://www.google.com/search?q=' + encodeURIComponent(q);
 const EXT = 'target="_blank" rel="noopener noreferrer"';
+/* a company page people can read (the Artifact build cannot fetch anything itself); "Outra fonte" = a Google search */
+const cnpjPageUrl = cnpj => 'https://cnpj.biz/' + String(cnpj || '').replace(/\D/g, '');
+const cnpjOtherUrl = cnpj => gUrl('CNPJ ' + (E.formatCNPJ ? E.formatCNPJ(cnpj) : cnpj));
 function canLookupCnpj() { return S.auth.mode === 'netlify' && !!S.auth.user && store && typeof store.lookupCnpj === 'function'; }
 function lookupHelpHTML(t, p) {
   const q = (E.searchQuery ? E.searchQuery(t) : (t.merchant || t.rawDescription)) || t.rawDescription || '';
@@ -1815,12 +1822,12 @@ function lookupHelpHTML(t, p) {
     <div class="row help-links">
       <a class="btn sm" id="${p}-google" href="${esc(gUrl(q))}" ${EXT}>Pesquisar no Google</a>
       ${cnpj ? (viaServer ? `<button class="btn sm" type="button" id="${p}-cnpj" data-act="cnpj-lookup" data-p="${p}" data-cnpj="${esc(cnpj)}">Consultar CNPJ</button>`
-        : `<a class="btn sm" id="${p}-cnpj" href="https://brasilapi.com.br/api/cnpj/v1/${esc(cnpj)}" ${EXT}>Consultar CNPJ</a>`)
+        : `<a class="btn sm" id="${p}-cnpj" href="${esc(cnpjPageUrl(cnpj))}" ${EXT}>Consultar CNPJ</a><a class="xs" id="${p}-cnpj-alt" href="${esc(cnpjOtherUrl(cnpj))}" ${EXT}>Outra fonte</a>`)
         : `<a class="btn sm" id="${p}-cnpj-name" href="${esc(gUrl(merchant + ' CNPJ'))}" ${EXT}>Buscar CNPJ pelo nome</a>`}
     </div>
     ${cnpj ? `<span class="xs muted">CNPJ na descrição: ${esc(E.formatCNPJ ? E.formatCNPJ(cnpj) : cnpj)}</span>` : ''}
     <div id="${p}-cnpj-out" aria-live="polite"></div>
-    ${viaServer ? '' : `<div class="field"><label for="${p}-cnae">Colar CNAE</label><input type="text" id="${p}-cnae" data-cnae="${p}" autocomplete="off" placeholder="Ex.: 4771-7/01, ou cole a atividade"><span class="xs muted">${cnpj ? 'Abra a consulta, copie o "cnae_fiscal" (ou a resposta inteira) e cole aqui.' : 'Achou o CNPJ? Copie a atividade principal (CNAE) e cole aqui.'}</span></div>`}
+    ${viaServer ? '' : `<div class="field"><label for="${p}-cnae">Colar atividade ou CNAE</label><textarea id="${p}-cnae" data-cnae="${p}" rows="2" autocomplete="off" spellcheck="false" placeholder="Ex.: 47.71-7-01, ou cole o texto da página da empresa"></textarea><span class="xs muted">${cnpj ? 'Na página da empresa, copie a "Atividade principal" (ou a página toda) e cole aqui.' : 'Achou o CNPJ? Copie a atividade principal (CNAE) e cole aqui.'}</span></div>`}
     <div class="sug-row" id="${p}-cnae-out" aria-live="polite"></div>
     <p class="xs faint">Nada é enviado a ninguém até você tocar num destes botões.</p>
   </div>`;
@@ -1846,9 +1853,12 @@ async function cnpjLookup(p, cnpj) {
     const r = await store.lookupCnpj(cnpj);
     const o = $('#' + p + '-cnpj-out'); if (!o) return;
     const sug = (E.suggestFromCNAE && (E.suggestFromCNAE(r.cnae_fiscal != null ? String(r.cnae_fiscal) : '') || E.suggestFromCNAE(r.cnae_fiscal_descricao || ''))) || null;
-    o.innerHTML = `<div class="cnpj-res"><b>${esc(r.nome_fantasia || r.razao_social || '')}</b>${r.nome_fantasia && r.razao_social ? `<span class="xs muted">${esc(r.razao_social)}</span>` : ''}
-      <span class="small">Atividade: ${esc(r.cnae_fiscal_descricao || '—')}${r.cnae_fiscal ? ' <span class="faint">(' + esc(String(r.cnae_fiscal)) + ')</span>' : ''}</span>
-      ${r.municipio ? `<span class="xs muted">${esc(r.municipio)}${r.uf ? '/' + esc(r.uf) : ''}</span>` : ''}
+    const code = r.cnae_fiscal != null && /^\d{7}$/.test(String(r.cnae_fiscal)) ? String(r.cnae_fiscal).replace(/^(\d{4})(\d)(\d{2})$/, '$1-$2/$3') : (r.cnae_fiscal != null ? String(r.cnae_fiscal) : '');
+    const str = v => typeof v === 'string' || typeof v === 'number' ? String(v) : '';
+    o.innerHTML = `<div class="cnpj-res" id="${p}-cnpj-card"><b>${esc(str(r.nome_fantasia) || str(r.razao_social) || 'Empresa')}</b>
+      <dl>${str(r.razao_social) ? `<dt>Razão social</dt><dd>${esc(str(r.razao_social))}</dd>` : ''}${str(r.nome_fantasia) ? `<dt>Nome fantasia</dt><dd>${esc(str(r.nome_fantasia))}</dd>` : ''}
+        <dt>Atividade principal</dt><dd>${esc(str(r.cnae_fiscal_descricao) || '—')}${code ? ' <span class="faint">(' + esc(code) + ')</span>' : ''}</dd>
+        ${str(r.municipio) ? `<dt>Cidade/UF</dt><dd>${esc(str(r.municipio))}${str(r.uf) ? '/' + esc(str(r.uf)) : ''}</dd>` : ''}</dl>
       ${sug && catIndex()[sug.categoryId] ? `<div class="sug-row"><span class="xs muted" style="flex-basis:100%">Sugestão — toque para usar:</span>${cnaeChipHTML(sug, p)}</div>` : ''}</div>`;
   } catch (e) {
     const o = $('#' + p + '-cnpj-out'); if (!o) return;
@@ -2199,7 +2209,7 @@ function renderStep1(b){
     <div class="card">
       <h3>De qual conta é este arquivo?</h3>
       ${I.alertNote ? `<p class="small al-note" id="imp-alert-note">${esc(I.alertNote)}</p>` : ''}
-      <p class="xs muted">Vários arquivos de uma vez? Escolha todos abaixo: a conta é escolhida em cada um.</p>
+      <p class="xs muted">Vários arquivos de uma vez? Escolha todos abaixo: esta conta vale para todos, e dá para trocar só a de um arquivo.</p>
       <div class="field"><label for="imp-acc">Conta</label>${accountSelect('imp-acc', I.accountId)}</div>
       <div class="form-grid" ${I.accountId==='__new'?'':'hidden'} id="new-acc">
         <div class="field"><label for="imp-acc-name">Nome</label><input type="text" id="imp-acc-name" placeholder="Ex.: Nubank cartão" value="${esc(I.newAcc.name)}"></div>
@@ -2529,11 +2539,12 @@ async function handleFiles(list) {
   const I = S.imp;
   if (files.length === 1 && !I.batch) { handleFile(files[0]); return; }
   I.err = '';
-  const B = I.batch || (I.batch = { items: [], done: null });
+  const B = I.batch || (I.batch = { items: [], done: null, shared: '', sharedTouched: false, newAccs: [], form: null, seq: 0 });
   B.done = null;
   B.busy = true; renderImport();
+  const added = [];
   for (const f of files) {
-    const it = { key: 'bf' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: f.name, checksum: '', newAcc: { name: '', type: 'checking' }, configured: false, layoutName: '' };
+    const it = { key: 'bf' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: f.name, checksum: '', ov: null, sug: null, configured: false, layoutName: '' };
     try {
       const r = await readFileAnalysis(f);
       if (!r.analysis || !Array.isArray(r.analysis.rows)) throw new Error('não reconheci uma tabela');
@@ -2543,14 +2554,14 @@ async function handleFiles(list) {
       it.matched = m || null;
       it.profile = m ? clone(m) : eng('profileFromAnalysis', r.analysis);
       batchDetectKind(it);
-      const sug = suggestAccount(it);
-      it.accountId = sug.id; it.autoNote = sug.note || null;
-      if (!it.accountId) it.newAcc.type = kindAccType(it.kind);
+      it.sug = suggestAccount(it);
     } catch (e) { it.err = 'Não consegui abrir: ' + (e && e.message || e) + '. Se for PDF, exporte como CSV ou XLSX no app do banco.'; }
     it.importId = 'imp-' + Date.now().toString(36) + '-' + B.items.length;
-    B.items.push(it);
+    B.items.push(it); added.push(it);
   }
   B.busy = false;
+  bfInitShared(B);
+  bfAutoAll(B);
   batchPreview();
   renderImport();
 }
@@ -2585,19 +2596,125 @@ function suggestAccount(it) {
   return { id: '', note: null };
 }
 const bfReadyLayout = it => !!(it.profile && (it.matched || it.configured));
-const bfAccType = it => it.accountId === '__new' ? it.newAcc.type : accType(it.accountId);
-const bfAccKey = it => it.accountId === '__new' ? '__new:' + normU(it.newAcc.name) + '|' + it.newAcc.type : it.accountId;
+/* v2.4a: ONE account for the whole batch ("Conta para todos os arquivos", B.shared); a file follows it unless it has an
+   override it.ov = { id, auto, note } ("Alterar só este" → manual; auto = kind mismatch / layout suggestion). Accounts
+   created in the batch are pending ("__nova:N", B.newAccs) until "Importar": created ONCE, shown in every selector, and
+   a second "+ Nova conta" with the same name reuses it. */
+const isPendingAcc = id => /^__nova:/.test(id || '');
+function bfPending(id) { const B = S.imp && S.imp.batch; return B && B.newAccs ? B.newAccs.find(a => a.id === id) || null : null; }
+function bfAccounts() {
+  const real = (S.mode === 'real' && S.real ? S.real.accounts : []).filter(a => a.type !== 'payslip');
+  const B = S.imp && S.imp.batch;
+  return real.concat(B && B.newAccs ? B.newAccs.map(a => Object.assign({ pending: true }, a)) : []);
+}
+const bfAccTypeOf = id => { const p = bfPending(id); return p ? p.type : accType(id); };
+const bfAccNameOf = id => { const p = bfPending(id); return p ? p.name : accName(id); };
+const bfAcc = it => it.ov ? (it.ov.id || '') : ((S.imp && S.imp.batch && S.imp.batch.shared) || '');
+const bfAccType = it => bfAccTypeOf(bfAcc(it));
 function bfReady(it) {
-  return !it.err && bfReadyLayout(it) && !!it.accountId && (it.accountId !== '__new' || !!it.newAcc.name.trim()) && it.preview && it.preview.fresh > 0;
+  return !it.err && bfReadyLayout(it) && !!bfAcc(it) && it.preview && it.preview.fresh > 0;
+}
+/** the shared account at the start: the step-1 account the user picked, else the alert's account, else the layouts'
+ *  account when every recognized file agrees on it */
+function bfInitShared(B) {
+  if (B.shared || B.sharedTouched) return;
+  const I = S.imp; const real = (S.mode === 'real' && S.real ? S.real.accounts : []);
+  const exists = id => real.some(a => a.id === id && a.type !== 'payslip');
+  if (I.accTouched) {
+    if (I.accountId === '__new' && (I.newAcc.name || '').trim()) { B.shared = bfNewAccount(I.newAcc.name, I.newAcc.type).id; B.sharedTouched = true; return; }
+    if (exists(I.accountId)) { B.shared = I.accountId; B.sharedTouched = true; return; }
+  }
+  if (I.fromAlert && exists(I.fromAlert)) { B.shared = I.fromAlert; return; }
+  const defs = B.items.filter(it => !it.err && it.matched && exists(it.matched.defaultAccountId)).map(it => it.matched.defaultAccountId);
+  if (defs.length && defs.every(x => x === defs[0])) { B.shared = defs[0]; return; }
+  if (!bfAccounts().length && !B.form) B.form = { target: 'shared', name: '', type: bfMajorityType(B), prev: '' };
+}
+function bfMajorityType(B) {
+  const k = B.items.filter(it => it.kind).map(it => it.kind);
+  const nf = k.filter(x => x === 'fatura').length;
+  return k.length && nf * 2 < k.length ? 'checking' : 'credit_card';
+}
+/** an account of the file's kind: the layout's suggestion when it fits, else the only account of that type */
+function bfFitFor(it) {
+  if (!it.kind) return null;
+  const accs = bfAccounts();
+  const s = it.sug && it.sug.id ? accs.find(a => a.id === it.sug.id) : null;
+  if (s && !kindMismatch(it.kind, s.type)) return s.id;
+  const exact = accs.filter(a => a.type === kindAccType(it.kind));
+  return exact.length === 1 ? exact[0].id : null;
+}
+/** recomputes the automatic overrides (manual ones stay) */
+function bfAuto(B, it) {
+  if (it.err || (it.ov && !it.ov.auto)) return;
+  it.ov = null;
+  const sh = B.shared;
+  const sug = it.sug || { id: '', note: null };
+  if (!B.sharedTouched && sug.id && sug.id !== sh) { it.ov = { id: sug.id, auto: true, note: sug.note ? Object.assign({ layout: true }, sug.note) : (sh ? { layout: true, to: sug.id } : null) }; return; }
+  const at = sh ? bfAccTypeOf(sh) : null;
+  if (sh && it.kind && at && kindMismatch(it.kind, at)) {
+    const fit = bfFitFor(it);
+    if (fit && fit !== sh) it.ov = { id: fit, auto: true, note: { shared: true, from: sh, to: fit } };
+  }
+}
+function bfAutoAll(B) { B.items.forEach(it => bfAuto(B, it)); }
+/** "+ Nova conta" in the batch: reuses an account (existing or pending) with the same name; else a pending one */
+function bfNewAccount(name, type) {
+  const B = S.imp.batch; const nm = String(name || '').trim(); const k = normU(nm);
+  const real = (S.mode === 'real' && S.real ? S.real.accounts : []).find(a => a.type !== 'payslip' && normU(a.name) === k);
+  if (real) return { id: real.id, reused: 'real' };
+  const p = (B.newAccs || []).find(a => normU(a.name) === k);
+  if (p) return { id: p.id, reused: 'pending' };
+  const a = { id: '__nova:' + (++B.seq), name: nm, type: type || 'checking' };
+  B.newAccs.push(a);
+  return { id: a.id, reused: null };
+}
+function bfFormOpen(target, type) {
+  const B = S.imp.batch;
+  const it = target === 'shared' ? null : bfItem(target);
+  B.form = { target, name: '', type: type || (it && it.kind ? kindAccType(it.kind) : bfMajorityType(B)), prev: target === 'shared' ? B.shared : (it && it.ov ? it.ov.id : bfAcc(it)) };
+  if (it) it.ov = { id: '', auto: false, prev: B.form.prev };
+  bfRefresh();
+  const n = $('#bf-new-name'); if (n) n.focus();
+}
+function bfFormCreate() {
+  const B = S.imp.batch; const F = B.form; if (!F) return;
+  const nmEl = $('#bf-new-name'); const tpEl = $('#bf-new-type');
+  const name = ((nmEl ? nmEl.value : F.name) || '').trim(); const type = (tpEl ? tpEl.value : F.type) || 'checking';
+  if (!name) { toast('Dê um nome para a conta nova (ex.: "Nubank cartão").', true); if (nmEl) nmEl.focus(); return; }
+  const r = bfNewAccount(name, type);
+  if (F.target === 'shared') { B.shared = r.id; B.sharedTouched = true; }
+  else { const it = bfItem(F.target); if (it) it.ov = { id: r.id, auto: false }; }
+  B.form = null;
+  bfAutoAll(B);
+  bfRefresh();
+  toast(r.reused ? 'Já existe "' + bfAccNameOf(r.id) + '": usei essa conta.' : 'Conta "' + name + '" pronta — aparece em todos os arquivos. Ela é criada ao importar.');
+}
+function bfFormCancel() {
+  const B = S.imp.batch; const F = B.form; if (!F) return;
+  if (F.target !== 'shared') { const it = bfItem(F.target); if (it) it.ov = F.prev && F.prev !== (B.shared || '') ? { id: F.prev, auto: false } : null; }
+  B.form = null; bfAutoAll(B); bfRefresh();
+}
+function bfAccOptions(sel, placeholder) {
+  const accs = bfAccounts();
+  return (sel ? '' : `<option value="" selected>${esc(placeholder || 'Escolha a conta…')}</option>`)
+    + accs.map(a => `<option value="${esc(a.id)}" ${sel === a.id ? 'selected' : ''}>${esc(a.name)} · ${esc(ACC_TYPES[a.type] || a.type)}${a.pending ? ' (nova)' : ''}</option>`).join('')
+    + `<option value="__new" ${sel === '__new' ? 'selected' : ''}>+ Nova conta…</option>`;
+}
+function bfFormHTML() {
+  const F = S.imp.batch.form; if (!F) return '';
+  return `<div class="newcat bf-newacc" id="bf-newacc" data-target="${esc(F.target)}"><div class="form-grid">
+      <div class="field"><label for="bf-new-name">Nome da conta nova</label><input type="text" id="bf-new-name" value="${esc(F.name)}" autocomplete="off" placeholder="${F.type === 'credit_card' ? 'Ex.: Cartão XP' : 'Ex.: Conta XP'}"></div>
+      <div class="field"><label for="bf-new-type">Tipo</label><select id="bf-new-type">${['credit_card', 'checking', 'savings', 'cash'].map(k => `<option value="${k}" ${F.type === k ? 'selected' : ''}>${ACC_TYPES[k]}</option>`).join('')}</select></div></div>
+    <p class="xs muted">Criada uma vez só: fica disponível para todos os arquivos desta lista.</p>
+    <div class="row end"><button class="btn sm" type="button" data-act="bf-new-cancel">Cancelar</button><button class="btn sm primary" type="button" data-act="bf-new-create" id="bf-new-create">Criar conta</button></div></div>`;
 }
 /** dry run of the whole batch (pure): rows, errors, duplicates (vs stored rows AND the other files), date range */
 function batchPreview() {
   const B = S.imp.batch; if (!B) return;
   const items = B.items.filter(it => it.profile && it.analysis && !it.err);
-  const pseudo = [];
-  items.forEach(it => { if (it.accountId === '__new') pseudo.push({ id: bfAccKey(it), name: it.newAcc.name, type: it.newAcc.type }); });
+  const pseudo = (B.newAccs || []).map(a => ({ id: a.id, name: a.name, type: a.type }));
   const c = Object.assign(ctx(), { accounts: (D().accounts || []).concat(pseudo) });
-  const res = eng('importBatch', S.mode === 'real' ? live() : [], items.map(it => ({ rows: it.analysis.rows, profile: it.profile, accountId: it.accountId ? bfAccKey(it) : '__pending:' + it.key, importId: 'pv-' + it.key, name: it.name })), c);
+  const res = eng('importBatch', S.mode === 'real' ? live() : [], items.map(it => ({ rows: it.analysis.rows, profile: it.profile, accountId: bfAcc(it) || '__pending:' + it.key, importId: 'pv-' + it.key, name: it.name })), c);
   const by = new Map(((res && res.results) || []).map(r => [r.importId, r]));
   B.order = ((res && res.results) || []).map(r => r.importId.slice(3));
   for (const it of B.items) {
@@ -2613,35 +2730,45 @@ function bfCheckHTML(it) {
   return diff <= 1 ? `<span class="check-res in">✓ Bate (${brl(Math.abs(it.preview.total || 0))})</span>` : `<span class="check-res out">Diferença de ${brl(diff)}</span><span class="xs muted">Lido: ${brl(Math.abs(it.preview.total || 0))}</span>`;
 }
 function bfRowHTML(it) {
-  const accs = (S.mode === 'real' && S.real ? S.real.accounts : []).filter(a => a.type !== 'payslip');
+  const B = S.imp.batch;
+  const accs = bfAccounts().filter(a => a.type !== 'cash');
   const p = it.preview;
   const layoutTag = it.err ? '<span class="tag err">Não abriu</span>'
     : it.matched ? `<span class="tag ok">Layout reconhecido: ${esc(it.matched.name.replace(/^Layout:\s*/, ''))}</span>`
       : it.configured ? `<span class="tag ok">Layout configurado${it.layoutName ? ': ' + esc(it.layoutName) : ''}</span>` : '<span class="tag warn">Novo layout</span>';
   const kindTag = (it.kind ? `<span class="tag acc">${KIND_LBL2[it.kind]}</span>` : (it.err ? '' : '<span class="tag">Tipo não identificado</span>'))
     + (p && p.count > 0 && p.fresh === 0 && p.dups > 0 ? '<span class="tag warn" data-already>Já importado: nada novo</span>' : '');
+  const acc = bfAcc(it);
   const at = bfAccType(it);
-  const mis = it.kind && it.accountId && at && kindMismatch(it.kind, at);
+  const formHere = B.form && B.form.target === it.key;
+  const mis = !formHere && it.kind && acc && at && kindMismatch(it.kind, at);
   const right = mis ? accs.find(a => !kindMismatch(it.kind, a.type)) : null;
-  const accLabel = it.accountId === '__new' ? (it.newAcc.name || 'conta nova') : accName(it.accountId);
-  const note = it.autoNote && it.accountId === it.autoNote.to ? `<div class="banner info xs" data-note="${esc(it.key)}"><div>Escolhi <b>${esc(accName(it.autoNote.to))}</b>: este arquivo é ${it.kind === 'extrato' ? 'um extrato bancário' : 'uma fatura de cartão'} e o layout estava ligado a ${esc(accName(it.autoNote.from))} (${esc(ACC_TYPES[accType(it.autoNote.from)] || '')}).</div></div>` : '';
-  return `<div class="bf${mis ? ' bad' : ''}" data-key="${esc(it.key)}">
-    <div class="bf-top"><span class="nm">${esc(it.name)}</span><button class="icon-btn" type="button" data-act="bf-remove" data-key="${esc(it.key)}" aria-label="Remover da lista" title="Remover da lista"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  const accLabel = bfAccNameOf(acc);
+  const k = esc(it.key);
+  const n = it.ov && it.ov.auto ? it.ov.note : null;
+  const kindTxt = it.kind === 'extrato' ? 'um extrato bancário' : 'uma fatura de cartão';
+  const note = !n || !acc ? '' : `<div class="banner info xs" data-note="${k}"><div class="grow">${n.shared
+      ? `Só este arquivo vai para <b>${esc(bfAccNameOf(n.to))}</b>: é ${kindTxt} e a conta de todos (${esc(bfAccNameOf(n.from))}) é ${esc((ACC_TYPES[bfAccTypeOf(n.from)] || '').toLowerCase())}.`
+      : n.from ? `Escolhi <b>${esc(bfAccNameOf(n.to))}</b>: este arquivo é ${kindTxt} e o layout estava ligado a ${esc(accName(n.from))} (${esc(ACC_TYPES[accType(n.from)] || '')}).`
+        : `Este layout costuma ir para <b>${esc(bfAccNameOf(n.to))}</b>.`}</div></div>`;
+  const shared = B.shared || '';
+  const accBox = it.ov || formHere
+    ? `<div class="field bf-own"><label for="bf-acc-${k}">Conta só deste arquivo</label><select id="bf-acc-${k}" data-bfacc="${k}">${bfAccOptions(formHere ? '__new' : acc)}</select></div>
+      ${formHere ? bfFormHTML() : ''}
+      <div class="row"><button class="btn ghost sm" type="button" data-act="bf-default" data-key="${k}" id="bf-default-${k}">${shared ? 'Voltar ao padrão (' + esc(bfAccNameOf(shared)) + ')' : 'Voltar ao padrão'}</button></div>`
+    : `<div class="bf-inh" data-inherit="${k}"><span class="small grow">Conta: ${shared ? `<b>${esc(bfAccNameOf(shared))}</b> <span class="faint">· a de todos</span>` : '<span class="warn-t" data-needacc>escolha a conta acima</span>'}</span>
+      <button class="btn ghost sm" type="button" data-act="bf-own" data-key="${k}" id="bf-own-${k}">Alterar só este</button></div>`;
+  return `<div class="bf${mis ? ' bad' : ''}" data-key="${k}">
+    <div class="bf-top"><span class="nm">${esc(it.name)}</span><button class="icon-btn" type="button" data-act="bf-remove" data-key="${k}" aria-label="Remover da lista" title="Remover da lista"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     ${it.err ? `<div class="banner err"><div>${esc(it.err)}</div></div>` : `
     <div class="bf-tags">${layoutTag}${kindTag}</div>
-    <div class="bf-stats small" data-stats="${esc(it.key)}">${p ? `${esc(fmtRange(p.from, p.to))} · <b class="num">${p.count}</b> linha${p.count === 1 ? '' : 's'} · <b class="num ${p.errors ? 'out' : ''}">${p.errors}</b> erro${p.errors === 1 ? '' : 's'} · <b class="num">${p.dups}</b> duplicado${p.dups === 1 ? '' : 's'}` : 'Sem leitura'}</div>
-    <div class="field"><label for="bf-acc-${esc(it.key)}">Conta</label><select id="bf-acc-${esc(it.key)}" data-bfacc="${esc(it.key)}">
-      ${it.accountId ? '' : '<option value="" selected>Escolha a conta…</option>'}
-      ${accs.map(a => `<option value="${esc(a.id)}" ${it.accountId === a.id ? 'selected' : ''}>${esc(a.name)} · ${esc(ACC_TYPES[a.type] || a.type)}</option>`).join('')}
-      <option value="__new" ${it.accountId === '__new' ? 'selected' : ''}>+ Nova conta…</option></select></div>
-    ${it.accountId === '__new' ? `<div class="form-grid"><div class="field"><label for="bf-nm-${esc(it.key)}">Nome</label><input type="text" id="bf-nm-${esc(it.key)}" data-bfname="${esc(it.key)}" value="${esc(it.newAcc.name)}" placeholder="${it.kind === 'fatura' ? 'Ex.: Cartão XP' : 'Ex.: Conta XP'}"></div>
-      <div class="field"><label for="bf-tp-${esc(it.key)}">Tipo</label><select id="bf-tp-${esc(it.key)}" data-bftype="${esc(it.key)}">${['credit_card', 'checking', 'savings', 'cash'].map(k => `<option value="${k}" ${it.newAcc.type === k ? 'selected' : ''}>${ACC_TYPES[k]}</option>`).join('')}</select></div></div>` : ''}
-    ${mis ? `<div class="mismatch" role="alert" data-mismatch="${esc(it.key)}"><div><b>Conta errada?</b> Este arquivo parece ${it.kind === 'extrato' ? 'um <b>extrato bancário</b> (Pix, TED, saldo ou rendimentos)' : 'uma <b>fatura de cartão</b> (compras, parcelas)'}, mas <b>${esc(accLabel)}</b> é ${esc((ACC_TYPES[at] || at).toLowerCase())}. Misturados, lançamentos do extrato e da fatura podem ser descartados como repetidos e os pagamentos de fatura ficam errados.</div>
-      <div class="row">${right ? `<button class="btn sm primary" type="button" data-act="bf-fix" data-key="${esc(it.key)}" data-to="${esc(right.id)}">Usar ${esc(right.name)}</button>` : ''}<button class="btn sm${right ? '' : ' primary'}" type="button" data-act="bf-fix" data-key="${esc(it.key)}" data-to="__new">Criar ${it.kind === 'extrato' ? 'conta corrente' : 'cartão de crédito'}</button></div></div>` : ''}
+    <div class="bf-stats small" data-stats="${k}">${p ? `${esc(fmtRange(p.from, p.to))} · <b class="num">${p.count}</b> linha${p.count === 1 ? '' : 's'} · <b class="num ${p.errors ? 'out' : ''}">${p.errors}</b> erro${p.errors === 1 ? '' : 's'} · <b class="num">${p.dups}</b> duplicado${p.dups === 1 ? '' : 's'}` : 'Sem leitura'}</div>
+    ${accBox}
+    ${mis ? `<div class="mismatch" role="alert" data-mismatch="${k}"><div><b>Conta errada?</b> Este arquivo parece ${it.kind === 'extrato' ? 'um <b>extrato bancário</b> (Pix, TED, saldo ou rendimentos)' : 'uma <b>fatura de cartão</b> (compras, parcelas)'}, mas <b>${esc(accLabel)}</b> é ${esc((ACC_TYPES[at] || at).toLowerCase())}. Misturados, lançamentos do extrato e da fatura podem ser descartados como repetidos e os pagamentos de fatura ficam errados.</div>
+      <div class="row">${right ? `<button class="btn sm primary" type="button" data-act="bf-fix" data-key="${k}" data-to="${esc(right.id)}">Usar ${esc(right.name)}</button>` : ''}<button class="btn sm${right ? '' : ' primary'}" type="button" data-act="bf-fix" data-key="${k}" data-to="__new">Criar ${it.kind === 'extrato' ? 'conta corrente' : 'cartão de crédito'}</button></div></div>` : ''}
     ${note}
-    ${!it.accountId ? '<p class="xs warn-t" data-needacc>Escolha a conta deste arquivo.</p>' : ''}
-    <details class="bf-ckd" ${it.checksum ? 'open' : ''}><summary>Conferir total (opcional)</summary><div class="bf-ck"><input type="text" inputmode="decimal" class="money-in" data-bfck="${esc(it.key)}" id="bf-ck-${esc(it.key)}" placeholder="Total do arquivo" value="${esc(it.checksum)}" aria-label="Total impresso em ${esc(it.name)}"><span class="bf-ckres" id="bf-ckres-${esc(it.key)}" style="display:flex;flex-direction:column">${bfCheckHTML(it)}</span></div></details>
-    ${bfReadyLayout(it) ? (it.matched || it.configured ? `<div class="row"><button class="btn ghost sm" type="button" data-act="bf-config" data-key="${esc(it.key)}">Revisar leitura</button></div>` : '') : `<div class="row"><button class="btn sm primary" type="button" data-act="bf-config" data-key="${esc(it.key)}">Configurar</button><span class="xs muted grow">Layout novo: confira as colunas uma vez; da próxima vez ele é reconhecido.</span></div>`}`}
+    <details class="bf-ckd" ${it.checksum ? 'open' : ''}><summary>Conferir total (opcional)</summary><div class="bf-ck"><input type="text" inputmode="decimal" class="money-in" data-bfck="${k}" id="bf-ck-${k}" placeholder="Total do arquivo" value="${esc(it.checksum)}" aria-label="Total impresso em ${esc(it.name)}"><span class="bf-ckres" id="bf-ckres-${k}" style="display:flex;flex-direction:column">${bfCheckHTML(it)}</span></div></details>
+    ${bfReadyLayout(it) ? (it.matched || it.configured ? `<div class="row"><button class="btn ghost sm" type="button" data-act="bf-config" data-key="${k}">Revisar leitura</button></div>` : '') : `<div class="row"><button class="btn sm primary" type="button" data-act="bf-config" data-key="${k}">Configurar</button><span class="xs muted grow">Layout novo: confira as colunas uma vez; da próxima vez ele é reconhecido.</span></div>`}`}
   </div>`;
 }
 function renderBatch(b) {
@@ -2650,9 +2777,16 @@ function renderBatch(b) {
   const ready = B.items.filter(bfReady);
   const order = (B.order || []).map(k => B.items.find(it => it.key === k)).filter(Boolean);
   const pending = B.items.length - ready.length;
+  const formShared = B.form && B.form.target === 'shared';
+  const nOwn = B.items.filter(it => !it.err && it.ov && it.ov.id).length;
   b.innerHTML = `
     <div class="card"><div class="card-h"><h3>${B.items.length} arquivo${B.items.length === 1 ? '' : 's'}</h3><button class="btn ghost sm" type="button" data-act="bf-reset">Cancelar</button></div>
-      <p class="small muted">Cada arquivo vai para a conta escolhida. A importação segue a ordem das datas (mais antigo primeiro), então parcelas e repetidos são tratados como se você importasse um por vez.</p>
+      <div class="bf-shared" id="bf-shared-box">
+        <div class="field"><label for="bf-shared">Conta para todos os arquivos</label><select id="bf-shared">${bfAccOptions(formShared ? '__new' : (B.shared || ''))}</select></div>
+        ${formShared ? bfFormHTML() : ''}
+        <p class="xs muted" id="bf-shared-hint">Todos os arquivos seguem esta conta${nOwn ? ` — <b>${nOwn}</b> com conta própria` : ''}. Arquivo de outra conta? Toque em "Alterar só este" nele.</p>
+      </div>
+      <p class="small muted">A importação segue a ordem das datas (mais antigo primeiro), então parcelas e repetidos são tratados como se você importasse um por vez.</p>
       ${B.busy ? '<p class="row small"><span class="spinner"></span> Lendo arquivos…</p>' : ''}
       <div class="bf-list" id="bf-list">${B.items.map(bfRowHTML).join('')}</div>
       <input type="file" id="imp-file" class="file-in" multiple accept="${FILE_ACCEPT}"><label class="drop" id="drop" for="imp-file" style="padding:12px"><b>+ Adicionar arquivos</b></label>
@@ -2668,8 +2802,7 @@ function bfConfigure(key) {
   const it = bfItem(key); if (!it || !it.analysis) return;
   const I = S.imp;
   Object.assign(I, { analysis: it.analysis, profile: clone(it.profile), matched: it.matched, fileName: it.name, encoding: it.encoding, importId: it.importId,
-    accountId: it.accountId || '', layoutName: it.layoutName || (it.matched ? it.matched.name : ''), checksum: it.checksum || '', upgraded: [], batchKey: key, err: '' });
-  if (I.accountId === '__new') I.newAcc = clone(it.newAcc);
+    accountId: bfAcc(it), layoutName: it.layoutName || (it.matched ? it.matched.name : ''), checksum: it.checksum || '', upgraded: [], batchKey: key, err: '' });
   runPreview(); I.step = 2; renderImport(); window.scrollTo({ top: 0 });
 }
 function bfConfigSave() {
@@ -2681,8 +2814,8 @@ function bfConfigSave() {
   it.checksum = I.checksum || it.checksum;
   batchDetectKind(it);
   // other files of the same (new) layout take the same reading
-  for (const o of S.imp.batch.items) if (o !== it && !o.matched && !o.configured && o.analysis && o.analysis.fingerprint === it.analysis.fingerprint) { o.profile = clone(it.profile); o.layoutName = name; o.configured = true; batchDetectKind(o); }
-  if (!it.accountId) { const sug = suggestAccount(it); it.accountId = sug.id; }
+  for (const o of S.imp.batch.items) if (o !== it && !o.matched && !o.configured && o.analysis && o.analysis.fingerprint === it.analysis.fingerprint) { o.profile = clone(it.profile); o.layoutName = name; o.configured = true; batchDetectKind(o); o.sug = suggestAccount(o); bfAuto(S.imp.batch, o); }
+  it.sug = suggestAccount(it); bfAuto(S.imp.batch, it);
   I.batchKey = null; I.step = 1;
   bfRefresh(); window.scrollTo({ top: 0 });
 }
@@ -2694,8 +2827,18 @@ function bfImport() {
   if (!ready.length) return;
   ensureReal();
   const d = S.real; const now = nowISO(); const metaN = new Set(['accounts', 'imports']);
+  // accounts created in the list: each one ONCE, however many files use it
   const made = {};
-  for (const it of ready) if (it.accountId === '__new') { const k = bfAccKey(it); made[k] = made[k] || addAccount(it.newAcc.name.trim(), it.newAcc.type); it.accountId = made[k]; }
+  for (const it of ready) {
+    const id = bfAcc(it);
+    if (isPendingAcc(id) && !made[id]) { const pa = bfPending(id); made[id] = addAccount(pa.name, pa.type); }
+    it.accountId = made[id] || id;
+  }
+  if (Object.keys(made).length) {
+    if (made[B.shared]) B.shared = made[B.shared];
+    B.items.forEach(it => { if (it.ov && made[it.ov.id]) it.ov.id = made[it.ov.id]; });
+    B.newAccs = B.newAccs.filter(a => !made[a.id]);
+  }
   // layouts: save new ones; a recognized layout follows the account the user picked when it fits the file
   for (const it of ready) {
     if (it.configured && it.layoutName) {
@@ -3122,7 +3265,8 @@ function openSettings(step) {
     <div class="field"><span class="lbl">Tema</span><div class="seg" role="group" aria-label="Tema">${[['system', 'Sistema'], ['light', 'Claro'], ['dark', 'Escuro']].map(([k, v]) => `<button type="button" data-act="theme" data-v="${k}" aria-pressed="${theme === k}">${v}</button>`).join('')}</div></div>
     <div class="field"><span class="lbl">Armazenamento</span><p class="small">${esc(st)}</p>
       ${signedOut() ? '<div class="row"><button class="btn primary sm" type="button" data-act="login">Entrar</button></div>' : ''}</div>
-    <div class="field"><span class="lbl">Contas</span><div class="row"><button class="btn" type="button" data-act="accounts" id="btn-accounts">Contas e importações</button></div></div>
+    <div class="field"><span class="lbl">Contas</span><div class="row"><button class="btn" type="button" data-act="accounts" id="btn-accounts">Contas e importações</button><button class="btn" type="button" data-act="manage" id="btn-manage">Gerenciar dados</button></div>
+      <p class="xs faint">Gerenciar dados: excluir o que entrou errado — um arquivo, um mês, uma conta ou lançamentos escolhidos.</p></div>
     <div class="field" id="carry-set">${carrySettingsHTML()}</div>
     <div class="field"><span class="lbl">Backup</span>
       <div class="row"><button class="btn" type="button" data-act="export" id="btn-export" ${S.mode === 'real' && store ? '' : 'disabled'}>Exportar backup</button>
@@ -3238,7 +3382,7 @@ function renderAccountsSheet() {
       : '<p class="small muted">Nenhuma conta ainda. Elas são criadas ao importar um extrato.</p>'}
       <p class="xs muted">Trocar o tipo recalcula entradas, estornos e pagamentos de fatura dessa conta. Categorias manuais são mantidas.</p>
     </div>
-    <div class="card"><h3>Importações</h3>
+    <div class="card"><div class="card-h"><h3>Importações</h3><button class="btn sm" type="button" data-act="manage" id="btn-manage-imp">Gerenciar dados</button></div>
       ${imps.length ? `<div id="imp-list">${imps.map(r => {
         const moving = U.move && U.move.id === r.id, deleting = U.del === r.id;
         const others = accs.filter(a => a.id !== r.accountId && a.type !== 'payslip');
@@ -3250,7 +3394,7 @@ function renderAccountsSheet() {
               <div class="form-grid" id="mv-new" ${U.move.to === '__new' || !others.length ? '' : 'hidden'}><div class="field"><label for="mv-name">Nome</label><input type="text" id="mv-name" placeholder="Ex.: XP conta corrente" value="${esc(U.move.name || '')}"></div>
               <div class="field"><label for="mv-type">Tipo</label><select id="mv-type">${['checking', 'credit_card', 'savings', 'cash'].map(k => `<option value="${k}" ${(U.move.type || 'checking') === k ? 'selected' : ''}>${ACC_TYPES[k]}</option>`).join('')}</select></div></div>
               <div class="row end"><button class="btn sm" type="button" data-act="imp-move-cancel">Cancelar</button><button class="btn sm primary" type="button" data-act="imp-move-do" data-id="${esc(r.id)}" id="mv-confirm">Mover ${r.count}</button></div></div>`
-          : deleting ? `<div class="banner err" id="del-box"><div class="grow"><b>Excluir esta importação?</b> ${r.count} lançamento${r.count === 1 ? '' : 's'} somem de todas as telas (inclusive categorias manuais). Não dá para desfazer.</div></div>
+          : deleting ? `<div class="banner err" id="del-box"><div class="grow"><b>Excluir esta importação?</b> ${r.count} lançamento${r.count === 1 ? '' : 's'} somem de todas as telas (inclusive categorias manuais)${(() => { const pl = delPlan({ importIds: [r.id] }); return ' · ' + esc(pl.months.map(ymShort).join(', ')) + ' · soma ' + brl(pl.sum); })()}. Dá para desfazer logo depois, no aviso.</div></div>
               <div class="row end"><button class="btn sm" type="button" data-act="imp-del-cancel">Cancelar</button><button class="btn sm danger" type="button" data-act="imp-del-do" data-id="${esc(r.id)}" id="del-confirm">Excluir ${r.count}</button></div>`
           : `<div class="row"><button class="btn sm" type="button" data-act="imp-move" data-id="${esc(r.id)}">Mover para outra conta</button><button class="btn sm ghost" type="button" data-act="imp-del" data-id="${esc(r.id)}" style="color:var(--out)">Excluir importação</button></div>`}
         </div>`; }).join('')}</div>` : '<p class="small muted">Nenhuma importação ainda.</p>'}
@@ -3276,12 +3420,9 @@ function moveImportTo(impId) {
   toast(changed.length + ' lançamentos movidos para ' + accName(to));
 }
 function deleteImport(impId) {
-  const d = D();
-  const ids = live().filter(t => t.importId === impId).map(t => t.id);
-  if (d.imports) delete d.imports[impId];
   if (S.accUI) S.accUI.del = null;
-  commit({ remove: ids, meta: ['imports'] });
-  toast(ids.length + ' lançamentos excluídos.');
+  const r = (D().imports || {})[impId];
+  runDeletion(delPlan({ importIds: [impId] }, { label: 'importação ' + (r && r.fileName || '') }));
 }
 function changeAccountType(accId, type) {
   const d = D();
@@ -3294,6 +3435,158 @@ function changeAccountType(accId, type) {
   const changed = txs.filter(t => t && !t.deleted && t.accountId === accId && prev.get(t.id) !== t);
   commit({ txs: changed, meta: ['accounts'] });
   toast('Tipo da conta atualizado' + (changed.length ? ' · ' + changed.length + ' lançamentos recalculados' : ''));
+}
+
+/* ================= v2.4a: Gerenciar dados — deletions with an in-page confirmation and "Desfazer" =================
+   Every deletion: FinEngine.selectForDeletion (what) → in-page summary (rows, months, sum) → runDeletion: applyDeletion
+   cleans what depended on the rows (imports, series rules, dismissed alerts, layouts' default account) and commit({remove})
+   leaves the rows out of saveMonth (deleteMonth when a month empties) → store tombstones → synced, never resurrected.
+   "Desfazer" (session only) re-saves the kept rows with a new updatedAt (newer than the tombstones) and the meta. */
+const UNDO = { list: [] };
+const ymShort = ym => { const [y, m] = String(ym).split('-'); return (MES3[+m - 1] || m) + '/' + String(y).slice(2); };
+function delPlan(sel, opts) {
+  opts = opts || {};
+  const s = eng('selectForDeletion', live(), sel, D().imports || {}) || { ids: [], rows: [], count: 0, months: [], sum: 0, accounts: [], importIds: [] };
+  return Object.assign(s, { sel, removeAccountIds: opts.removeAccountIds || [], label: opts.label || '', section: opts.section || null });
+}
+function delPlanHTML(plan, cancelAct) {
+  const n = plan.count;
+  const accRm = plan.removeAccountIds.map(accName);
+  const gone = new Set(plan.ids);
+  const nImp = Object.values(D().imports || {}).filter(r => r && (plan.removeAccountIds.includes(r.accountId) || (plan.importIds.includes(r.id) && live().every(t => t.importId !== r.id || gone.has(t.id))))).length;
+  const lines = [`<li><b class="num" data-del-count>${n}</b> lançamento${n === 1 ? '' : 's'}</li>`];
+  if (n) lines.push(`<li>Mês${plan.months.length === 1 ? '' : 'es'}: <span data-del-months>${esc(plan.months.map(ymShort).join(', '))}</span></li>`, `<li>Soma: <b class="money" data-del-sum>${brl(plan.sum)}</b></li>`, `<li>Conta${plan.accounts.length === 1 ? '' : 's'}: ${esc(plan.accounts.map(accName).join(', '))}</li>`);
+  if (nImp) lines.push(`<li>${nImp} importaç${nImp === 1 ? 'ão' : 'ões'} ${plan.removeAccountIds.length ? 'da conta' : 'ficam sem lançamentos'}${plan.removeAccountIds.length ? '' : ' (o registro some)'}</li>`);
+  if (accRm.length) lines.push(`<li>A conta <b>${esc(accRm.join(', '))}</b> (alertas e layouts ligados a ela)</li>`);
+  const can = n > 0 || accRm.length > 0;
+  return `<div class="del-plan" id="del-plan" role="group" aria-label="Confirmar exclusão"><b>${can ? 'Vai excluir:' : 'Nada para excluir.'}</b>${can ? `<ul>${lines.join('')}</ul><span class="xs muted">Some deste aparelho e dos outros. Dá para desfazer logo depois, no aviso.</span>` : ''}
+    <div class="row end"><button class="btn sm" type="button" data-act="${cancelAct || 'del-cancel'}" id="del-cancel">Cancelar</button>${can ? `<button class="btn sm danger" type="button" data-act="del-do" id="del-do">${n ? 'Excluir ' + n : 'Excluir conta'}</button>` : ''}</div></div>`;
+}
+function runDeletion(plan) {
+  if (!plan || S.mode !== 'real' || (!plan.count && !plan.removeAccountIds.length)) return null;
+  if (signedOut()) { toast('Entre na sua conta para alterar seus dados.', true); return null; }
+  const d = D(); const now = nowISO();
+  const before = { imports: clone(d.imports || {}), rules: clone(d.rules || []), accounts: clone(d.accounts || []), profiles: clone(d.profiles || []), settings: clone(d.settings || {}) };
+  const r = eng('applyDeletion', { transactions: live(), imports: d.imports || {}, rules: d.rules || [], accounts: d.accounts || [], profiles: d.profiles || [], settings: d.settings || {} }, plan.ids, { removeAccountIds: plan.removeAccountIds, now });
+  if (!r) return null;
+  const prevChanged = r.changed.map(t => clone(txById(t.id))).filter(Boolean);
+  d.imports = r.imports; d.rules = r.rules; d.accounts = r.accounts; d.profiles = r.profiles; d.settings = r.settings;
+  const u = { id: 'del' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), label: plan.label, rows: clone(r.removed), prevChanged, report: r.report, before, n: r.removed.length };
+  UNDO.list.push(u); if (UNDO.list.length > 5) UNDO.list.shift();
+  if (S.ui.sel) plan.ids.forEach(id => S.ui.sel.delete(id));
+  commit({ remove: plan.ids, txs: r.changed, meta: r.meta });
+  const what = u.n ? u.n + ' lançamento' + (u.n === 1 ? '' : 's') + ' excluído' + (u.n === 1 ? '' : 's') : 'Conta excluída';
+  toast(what + (r.report.accountsRemoved.length && u.n ? ' · conta excluída' : '') + '.', false, { label: 'Desfazer', fn: () => undoDeletion(u.id), ms: 10000 });
+  return u;
+}
+function undoDeletion(id) {
+  const u = UNDO.list.find(x => x.id === id); if (!u) { toast('Nada para desfazer.', true); return; }
+  UNDO.list = UNDO.list.filter(x => x !== u);
+  const d = D(); const now = nowISO(); const meta = new Set(); const rep = u.report; const B = u.before;
+  const rkey = r => r && (r.id || r.seriesKey);
+  if (rep.importsRemoved.length || rep.importsUpdated.length) {
+    d.imports = Object.assign({}, d.imports || {});
+    rep.importsRemoved.concat(rep.importsUpdated).forEach(k => { if (B.imports[k]) d.imports[k] = Object.assign({}, B.imports[k], { updatedAt: now }); });
+    meta.add('imports');
+  }
+  if (rep.rulesRemoved.length) {
+    const have = new Set((d.rules || []).map(rkey));
+    B.rules.filter(r => rep.rulesRemoved.includes(rkey(r)) && !have.has(rkey(r))).forEach(r => d.rules.push(Object.assign({}, r, { updatedAt: now })));
+    meta.add('rules');
+  }
+  if (rep.accountsRemoved.length) {
+    const cur = new Map((d.accounts || []).map(a => [a.id, a]));
+    const back = B.accounts.filter(a => cur.has(a.id) || rep.accountsRemoved.includes(a.id)).map(a => cur.get(a.id) || Object.assign({}, a, { updatedAt: now }));
+    d.accounts = back.concat((d.accounts || []).filter(a => !back.some(x => x.id === a.id)));
+    meta.add('accounts');
+  }
+  if (rep.profilesUpdated.length) {
+    d.profiles = (d.profiles || []).map(p => { const b = rep.profilesUpdated.includes(p.id) && B.profiles.find(x => x.id === p.id); return b && b.defaultAccountId && !p.defaultAccountId ? Object.assign({}, p, { defaultAccountId: b.defaultAccountId, updatedAt: now }) : p; });
+    meta.add('profiles');
+  }
+  if (rep.alertsCleared.length) {
+    const st = settingsObj(); st.dismissedAlerts = [...new Set((st.dismissedAlerts || []).concat(rep.alertsCleared))]; st.updatedAt = now; meta.add('settings');
+  }
+  commit({ txs: u.rows.concat(u.prevChanged), meta: [...meta] });
+  toast('Exclusão desfeita: ' + (u.n ? u.n + ' lançamento' + (u.n === 1 ? '' : 's') + ' de volta.' : 'conta de volta.'));
+}
+/* --- the "Gerenciar dados" sheet --- */
+function importRange(impId) { const ds = live().filter(t => t.importId === impId).map(t => t.date).sort(); return ds.length ? [ds[0], ds[ds.length - 1]] : [null, null]; }
+function openManageSheet() {
+  S.manUI = S.manUI || { file: null, allFile: false, month: '', monthAcc: '', acc: '', keepAcc: false, plan: null };
+  openSheet('<h2>Gerenciar dados</h2><p class="small muted">Exclua o que entrou errado. Antes de excluir você vê exatamente o que sai.</p>', '<div id="man-body"></div>', () => { S.manUI = null; }, { kind: 'manage', label: 'Gerenciar dados' });
+  renderManageSheet();
+}
+function renderManageSheet() {
+  const el = $('#man-body'); if (!el) return;
+  const U = S.manUI || (S.manUI = { file: null, allFile: false, month: '', monthAcc: '', acc: '', keepAcc: false, plan: null });
+  if (S.mode !== 'real') { el.innerHTML = '<p class="small muted" id="man-empty">Você está vendo dados de exemplo: não há nada seu para excluir.</p>'; return; }
+  const imps = importsList();
+  const byName = {}; imps.forEach(r => { byName[r.fileName || r.id] = (byName[r.fileName || r.id] || 0) + 1; });
+  const accs = (D().accounts || []);
+  const nByAcc = {}; live().forEach(t => { nByAcc[t.accountId] = (nByAcc[t.accountId] || 0) + 1; });
+  const months = dataMonthsList().slice().reverse();
+  const nByMonth = {}; live().forEach(t => { const m = ymOf(t.date); nByMonth[m] = (nByMonth[m] || 0) + 1; });
+  const planIn = sec => U.plan && U.plan.section === sec ? delPlanHTML(U.plan) : '';
+  const last = UNDO.list[UNDO.list.length - 1];
+  const fileRec = U.file ? imps.find(r => r.id === U.file) : null;
+  el.innerHTML = `
+    ${last ? `<div class="banner info" id="man-undo"><div class="grow">Última exclusão: ${last.n} lançamento${last.n === 1 ? '' : 's'}${last.label ? ' (' + esc(last.label) + ')' : ''}.</div><button class="btn sm" type="button" data-act="del-undo" data-id="${esc(last.id)}" id="man-undo-btn">Desfazer</button></div>` : ''}
+    <div class="card man-sec" id="man-file"><h3>Excluir por arquivo</h3>
+      ${imps.length ? `<div class="man-pick" role="group" aria-label="Importações">${imps.map(r => { const [a, b] = importRange(r.id); return `<button type="button" class="man-opt" data-act="man-file" data-id="${esc(r.id)}" aria-pressed="${U.file === r.id}"><span class="grow"><b class="small">${esc(r.fileName || r.id)}</b><br><span class="xs muted">${esc(accName(r.accountId))} · ${esc(fmtRange(a, b))} · ${r.count} lançamento${r.count === 1 ? '' : 's'}${r.at ? ' · importado em ' + esc(isoToBR(String(r.at).slice(0, 10))) : ''}</span></span><span class="money small">${brl(r.total)}</span></button>`; }).join('')}</div>
+        ${fileRec && byName[fileRec.fileName || fileRec.id] > 1 ? `<label class="check-chip" id="man-allfile-l"><input type="checkbox" id="man-allfile" ${U.allFile ? 'checked' : ''}>Excluir todas as ${byName[fileRec.fileName || fileRec.id]} importações de "${esc(fileRec.fileName)}"</label>` : ''}
+        ${planIn('file')}` : '<p class="small muted">Nenhuma importação com lançamentos.</p>'}
+    </div>
+    <div class="card man-sec" id="man-month"><h3>Excluir mês</h3>
+      <div class="form-grid"><div class="field"><label for="man-month-sel">Mês</label><select id="man-month-sel"><option value="">Escolha o mês…</option>${months.map(m => `<option value="${m}" ${U.month === m ? 'selected' : ''}>${esc(fmtYm(m))} · ${nByMonth[m]}</option>`).join('')}</select></div>
+        <div class="field"><label for="man-month-acc">Conta</label><select id="man-month-acc"><option value="">Todas as contas</option>${accs.map(a => `<option value="${esc(a.id)}" ${U.monthAcc === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div></div>
+      ${U.plan && U.plan.section === 'month' ? planIn('month') : `<div class="row end"><button class="btn sm" type="button" data-act="man-month-go" id="man-month-go" ${U.month ? '' : 'disabled'}>Revisar exclusão</button></div>`}
+    </div>
+    <div class="card man-sec" id="man-acc"><h3>Excluir conta ou banco</h3>
+      <div class="field"><label for="man-acc-sel">Conta</label><select id="man-acc-sel"><option value="">Escolha a conta…</option>${accs.map(a => `<option value="${esc(a.id)}" ${U.acc === a.id ? 'selected' : ''}>${esc(a.name)} · ${esc(ACC_TYPES[a.type] || a.type)} · ${nByAcc[a.id] || 0}</option>`).join('')}</select></div>
+      <div class="check-list" role="radiogroup" aria-label="O que excluir"><label class="check-chip"><input type="radio" name="man-keep" id="man-keep-no" value="no" ${U.keepAcc ? '' : 'checked'}>Excluir a conta e tudo dela</label><label class="check-chip"><input type="radio" name="man-keep" id="man-keep-yes" value="yes" ${U.keepAcc ? 'checked' : ''}>Manter a conta, apagar só os lançamentos</label></div>
+      ${U.plan && U.plan.section === 'account' ? planIn('account') : `<div class="row end"><button class="btn sm" type="button" data-act="man-acc-go" id="man-acc-go" ${U.acc ? '' : 'disabled'}>Revisar exclusão</button></div>`}
+    </div>
+    <div class="card man-sec"><h3>Escolher lançamentos</h3><p class="small muted">Em Transações, marque os lançamentos (ou todos do filtro) e exclua ou mude a categoria de uma vez.</p>
+      <div class="row"><button class="btn sm" type="button" data-act="sel-go" id="man-sel-go">Selecionar em Transações</button></div></div>`;
+  const pl = $('#del-plan'); if (pl && S._planScroll) { S._planScroll = false; pl.scrollIntoView({ block: 'nearest' }); }
+}
+function manPlanFile() {
+  const U = S.manUI; const rec = (D().imports || {})[U.file]; if (!rec) { U.plan = null; return; }
+  const all = U.allFile && Object.values(D().imports || {}).filter(r => r && r.fileName === rec.fileName).length > 1;
+  U.plan = all ? delPlan({ fileName: rec.fileName }, { label: 'todas as importações de ' + rec.fileName, section: 'file' }) : delPlan({ importIds: [rec.id] }, { label: rec.fileName || rec.id, section: 'file' });
+  S._planScroll = true;
+}
+/* --- Transações: selection mode --- */
+function selStart() { S.ui.sel = S.ui.sel || new Set(); S.ui.selPlan = null; }
+function selBarHTML() {
+  const sel = S.ui.sel; if (!sel) return '';
+  const n = sel.size; const nF = filteredTxs().length;
+  return `<div class="sel-bar" id="sel-bar"><span class="small grow"><b class="num" id="sel-count">${n}</b> selecionado${n === 1 ? '' : 's'}</span>
+    <button class="btn sm ghost" type="button" data-act="sel-all" id="sel-all">Todos do filtro (${nF})</button>
+    ${n ? '<button class="btn sm ghost" type="button" data-act="sel-none" id="sel-none">Limpar</button>' : ''}
+    <button class="btn sm" type="button" data-act="sel-cat" id="sel-cat" ${n ? '' : 'disabled'}>Mudar categoria</button>
+    <button class="btn sm danger" type="button" data-act="sel-del" id="sel-del" ${n ? '' : 'disabled'}>Excluir selecionados</button>
+    <button class="btn sm" type="button" data-act="sel-done" id="sel-done">Concluir</button>
+    ${S.ui.selPlan ? `<div style="flex-basis:100%">${delPlanHTML(S.ui.selPlan, 'sel-plan-cancel')}</div>` : ''}</div>`;
+}
+function selRefresh() { const b = $('#sel-bar'); if (b) b.outerHTML = selBarHTML(); renderTxList(); }
+function openBulkCategory() {
+  const n = S.ui.sel ? S.ui.sel.size : 0; if (!n) return;
+  openSheet(`<h2>Mudar categoria</h2><p class="small muted">${n} lançamento${n === 1 ? '' : 's'} selecionado${n === 1 ? '' : 's'}. Transferências e pagamentos de fatura ficam como estão.</p>`,
+    `<div class="field cat-picker"><label for="bulk-cat">Categoria</label>${catSelect('bulk-cat', null, { allowNone: true })}</div>
+     <div class="row end"><button class="btn" type="button" data-act="closesheet">Cancelar</button><button class="btn primary" type="button" data-act="bulk-cat-apply" id="bulk-cat-apply">Aplicar</button></div>`, null, { kind: 'bulkcat', label: 'Mudar categoria' });
+}
+function bulkCategory() {
+  const catId = ($('#bulk-cat') || {}).value || '';
+  if (!catId || catId === '__new') { toast('Escolha uma categoria.', true); return; }
+  const rows = [...(S.ui.sel || [])].map(txById).filter(t => t && countable(t));
+  if (!rows.length) { closeSheet(); toast('Nenhum dos selecionados aceita categoria (transferências / pagamentos de fatura).', true); return; }
+  const before = rows.map(clone);
+  const k = kindFor(catId);
+  closeSheet();
+  commit({ txs: rows.map(t => Object.assign({}, t, { categoryId: catId, catSource: 'manual', kind: k || t.kind })) });
+  toast(rows.length + ' lançamento' + (rows.length === 1 ? '' : 's') + ' → ' + catLabel(catId), false, { label: 'Desfazer', fn: () => { commit({ txs: before.filter(b => txById(b.id)) }); toast('Categorias de volta.'); }, ms: 10000 });
 }
 
 /* ================= events ================= */
@@ -3374,7 +3667,11 @@ const ACT = {
   'imp-batch-save': () => bfConfigSave(),
   'bf-remove': el => { const B = S.imp.batch; B.items = B.items.filter(it => it.key !== el.dataset.key); if (!B.items.length) S.imp.batch = null; bfRefresh(); },
   'bf-config': el => bfConfigure(el.dataset.key),
-  'bf-fix': el => { const it = bfItem(el.dataset.key); if (!it) return; it.accountId = el.dataset.to; if (it.accountId === '__new') { it.newAcc = { name: it.newAcc.name || '', type: kindAccType(it.kind) }; } bfRefresh(); if (it.accountId === '__new') { const n = $('#bf-nm-' + CSS.escape(it.key)); if (n) n.focus(); } },
+  'bf-fix': el => { const it = bfItem(el.dataset.key); if (!it) return; if (el.dataset.to === '__new') { bfFormOpen(it.key, kindAccType(it.kind)); return; } it.ov = { id: el.dataset.to, auto: false }; bfRefresh(); },
+  'bf-own': el => { const it = bfItem(el.dataset.key); if (!it) return; it.ov = { id: bfAcc(it), auto: false }; bfRefresh(); const s = $('#bf-acc-' + CSS.escape(it.key)); if (s) s.focus(); },
+  'bf-default': el => { const it = bfItem(el.dataset.key); if (!it) return; const B = S.imp.batch; if (B.form && B.form.target === it.key) B.form = null; it.ov = null; it.sug = null; bfRefresh(); },
+  'bf-new-create': () => bfFormCreate(),
+  'bf-new-cancel': () => bfFormCancel(),
   'bf-import': () => bfImport(),
   'bf-reset': () => { S.imp.batch = null; S.imp.step = 1; renderImport(); },
   'bf-pending-back': () => { S.imp.batch.done = null; bfRefresh(); },
@@ -3442,6 +3739,28 @@ const ACT = {
   'imp-del': el => { S.accUI.del = el.dataset.id; S.accUI.move = null; renderAccountsSheet(); },
   'imp-del-cancel': () => { S.accUI.del = null; renderAccountsSheet(); },
   'imp-del-do': el => deleteImport(el.dataset.id),
+  manage: () => openManageSheet(),
+  'man-file': el => { const U = S.manUI; if (U.file === el.dataset.id && U.plan) { U.file = null; U.plan = null; U.allFile = false; } else { if (U.file !== el.dataset.id) U.allFile = false; U.file = el.dataset.id; manPlanFile(); } renderManageSheet(); },
+  'man-month-go': () => { const U = S.manUI; if (!U.month) return; U.plan = delPlan({ month: U.month, accountId: U.monthAcc || undefined }, { label: fmtYm(U.month) + (U.monthAcc ? ' · ' + accName(U.monthAcc) : ''), section: 'month' }); S._planScroll = true; renderManageSheet(); },
+  'man-acc-go': () => { const U = S.manUI; if (!U.acc) return; U.plan = delPlan({ accountId: U.acc }, { label: (U.keepAcc ? 'lançamentos de ' : 'conta ') + accName(U.acc), section: 'account', removeAccountIds: U.keepAcc ? [] : [U.acc] }); S._planScroll = true; renderManageSheet(); },
+  'del-cancel': () => { if (S.manUI) { S.manUI.plan = null; if (S.manUI.file) S.manUI.file = null; } renderManageSheet(); },
+  'del-do': () => {
+    if (S.ui.selPlan && S.ui.tab === 'tx' && !(S.sheet && S.sheet.kind === 'manage')) { const p = S.ui.selPlan; S.ui.selPlan = null; runDeletion(p); selRefresh(); return; }
+    const U = S.manUI; if (!U || !U.plan) return; const p = U.plan; U.plan = null; U.file = null; U.allFile = false;
+    if (p.section === 'account' && p.removeAccountIds.length) U.acc = '';
+    runDeletion(p); renderManageSheet();
+  },
+  'del-undo': el => { undoDeletion(el.dataset.id); },
+  'sel-go': () => { closeSheet(); selStart(); setTab('tx'); },
+  'sel-start': () => { selStart(); renderTx(); },
+  'sel-done': () => { S.ui.sel = null; S.ui.selPlan = null; renderTx(); },
+  seltx: el => { const s = S.ui.sel; if (!s) return; const id = el.dataset.id; if (s.has(id)) s.delete(id); else s.add(id); S.ui.selPlan = null; const on = s.has(id); el.setAttribute('aria-pressed', on); const ck = el.querySelector('.ck'); if (ck) ck.textContent = on ? '✓' : ''; const b = $('#sel-bar'); if (b) b.outerHTML = selBarHTML(); },
+  'sel-all': () => { const s = S.ui.sel; if (!s) return; filteredTxs().forEach(t => s.add(t.id)); S.ui.selPlan = null; selRefresh(); },
+  'sel-none': () => { if (S.ui.sel) S.ui.sel.clear(); S.ui.selPlan = null; selRefresh(); },
+  'sel-del': () => { const s = S.ui.sel; if (!s || !s.size) return; S.ui.selPlan = delPlan({ ids: [...s] }, { label: s.size + ' selecionado' + (s.size === 1 ? '' : 's') }); selRefresh(); const p = $('#del-plan'); if (p) p.scrollIntoView({ block: 'nearest' }); },
+  'sel-plan-cancel': () => { S.ui.selPlan = null; selRefresh(); },
+  'sel-cat': () => openBulkCategory(),
+  'bulk-cat-apply': () => bulkCategory(),
   theme: el => { const v = el.dataset.v; if (v === 'system') ls.del('ff-theme'); else ls.set('ff-theme', v); applyTheme(v); openSettings(); if (S.ui.tab === 'painel') renderPainel(); },
   export: () => exportBackup(),
   'wipe-ask': () => openSettings('wipe'),
@@ -3481,7 +3800,7 @@ document.addEventListener('input', ev => {
   else if (S.imp && S.imp.hol && (t.classList.contains('hol-in') || t.id === 'hol-adv-pct')) { readHolerite(); const sp = $('#hol-split'); if (sp) sp.innerHTML = holSplitHTML(S.imp.hol); }
   else if (t.id === 'rl-value' || t.id === 'rl-op' || t.id === 'rl-field') updateRulePreview();
   else if (t.id === 'imp-acc-name' && S.imp) S.imp.newAcc.name = t.value;
-  else if (t.dataset && t.dataset.bfname) { const it = bfItem(t.dataset.bfname); if (it) it.newAcc.name = t.value; }
+  else if (t.id === 'bf-new-name' && S.imp && S.imp.batch && S.imp.batch.form) S.imp.batch.form.name = t.value;
   else if (t.dataset && t.dataset.bfck) { const it = bfItem(t.dataset.bfck); if (it) { it.checksum = t.value; const o = $('#bf-ckres-' + CSS.escape(it.key)); if (o) o.innerHTML = bfCheckHTML(it); } }
   else if (t.id === 'mv-name' && S.accUI && S.accUI.move) S.accUI.move.name = t.value;
 });
@@ -3518,17 +3837,22 @@ document.addEventListener('change', ev => {
     if (t.dataset && t.dataset.carryx) { setMonthExcluded(t.dataset.carryx, t.checked); return; }
     if (t.id === 'carry-enabled') { updateSettings(st => { st.carry = Object.assign({ excluded: [], included: [] }, st.carry || {}, { enabled: t.checked }); }); return; }
     if (t.id === 'carry-start') { updateSettings(st => { st.carry = Object.assign({ enabled: true, excluded: [], included: [] }, st.carry || {}, { startMonth: t.value || null }); }); return; }
-    if (t.dataset && t.dataset.bfacc) { const it = bfItem(t.dataset.bfacc); if (it) { it.accountId = t.value; if (t.value === '__new') it.newAcc = { name: it.newAcc.name || '', type: it.kind ? kindAccType(it.kind) : it.newAcc.type }; bfRefresh(); if (t.value === '__new') { const n = $('#bf-nm-' + CSS.escape(it.key)); if (n) n.focus(); } } return; }
-    if (t.dataset && t.dataset.bftype) { const it = bfItem(t.dataset.bftype); if (it) { it.newAcc.type = t.value; bfRefresh(); } return; }
-    if (t.dataset && t.dataset.bfname) { const it = bfItem(t.dataset.bfname); if (it) { it.newAcc.name = t.value; bfRefresh(); } return; }
+    if (t.dataset && t.dataset.bfacc) { const it = bfItem(t.dataset.bfacc); if (!it) return; const B = S.imp.batch; if (t.value === '__new') { bfFormOpen(it.key); return; } if (B.form && B.form.target === it.key) B.form = null; it.ov = { id: t.value, auto: false }; bfRefresh(); return; }
+    if (t.id === 'bf-shared') { const B = S.imp.batch; if (t.value === '__new') { bfFormOpen('shared'); return; } if (B.form && B.form.target === 'shared') B.form = null; B.shared = t.value; B.sharedTouched = true; bfAutoAll(B); bfRefresh(); return; }
+    if (t.id === 'bf-new-type') { if (S.imp && S.imp.batch && S.imp.batch.form) S.imp.batch.form.type = t.value; return; }
     if (t.id === 'imp-file' && t.files && t.files.length) { const fs = Array.from(t.files); t.value = ''; handleFiles(fs); }
     else if (t.id === 'restore-file' && t.files && t.files[0]) readBackup(t.files[0]);
-    else if (t.id === 'imp-acc') { S.imp.accountId = t.value; $('#new-acc').hidden = t.value !== '__new'; const an = $('#imp-alert-note'); if (an) an.hidden = t.value !== S.imp.fromAlert; }
+    else if (t.id === 'imp-acc') { S.imp.accountId = t.value; S.imp.accTouched = true; $('#new-acc').hidden = t.value !== '__new'; const an = $('#imp-alert-note'); if (an) an.hidden = t.value !== S.imp.fromAlert; }
     else if (t.id === 'imp-acc-type') { S.imp.newAcc.type = t.value; }
     else if (t.dataset && t.dataset.col != null && t.id.startsWith('imp-col-')) setColumnRole(+t.dataset.col, t.value);
     else if (t.id === 'imp-sign') { S.imp.profile.signConvention = t.value; runPreview(); renderImport(); }
     else if (t.id === 'hol-adv') { readHolerite(); const box = $('#hol-adv-box'); if (box) box.hidden = !t.checked; if (t.checked && !S.imp.hol.advDateTouched) { S.imp.hol.advDate = E.defaultAdvanceDate(S.imp.hol.date); const ad = $('#hol-adv-date'); if (ad) ad.value = isoToBR(S.imp.hol.advDate); } const sp = $('#hol-split'); if (sp) sp.innerHTML = holSplitHTML(S.imp.hol); }
     else if (t.id === 'hol-emp' || (t.dataset && t.dataset.od != null)) { readHolerite(); }
+    else if (t.id === 'man-month-sel' && S.manUI) { S.manUI.month = t.value; if (S.manUI.plan && S.manUI.plan.section === 'month') S.manUI.plan = null; renderManageSheet(); }
+    else if (t.id === 'man-month-acc' && S.manUI) { S.manUI.monthAcc = t.value; if (S.manUI.plan && S.manUI.plan.section === 'month') S.manUI.plan = null; renderManageSheet(); }
+    else if (t.id === 'man-acc-sel' && S.manUI) { S.manUI.acc = t.value; if (S.manUI.plan && S.manUI.plan.section === 'account') S.manUI.plan = null; renderManageSheet(); }
+    else if (t.name === 'man-keep' && S.manUI) { S.manUI.keepAcc = t.value === 'yes'; if (S.manUI.plan && S.manUI.plan.section === 'account') S.manUI.plan = null; renderManageSheet(); }
+    else if (t.id === 'man-allfile' && S.manUI) { S.manUI.allFile = t.checked; manPlanFile(); renderManageSheet(); }
     else if (t.id === 'mv-acc') { if (S.accUI && S.accUI.move) S.accUI.move.to = t.value; const nb = $('#mv-new'); if (nb) nb.hidden = t.value !== '__new'; }
     else if (t.id === 'mv-type') { if (S.accUI && S.accUI.move) S.accUI.move.type = t.value; }
     else if (t.dataset && t.dataset.accname) { const a = D().accounts.find(x => x.id === t.dataset.accname); if (a && t.value.trim() && a.name !== t.value.trim()) { a.name = t.value.trim(); a.updatedAt = nowISO(); commit({ meta: ['accounts'] }); toast('Conta renomeada'); } }

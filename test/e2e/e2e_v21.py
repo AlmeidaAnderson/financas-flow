@@ -176,7 +176,7 @@ def open_artifact(b, ns, scheme='light', w=390, h=844):
     ctx = b.new_context(viewport={'width': w, 'height': h}, color_scheme=scheme, device_scale_factor=2)
     ctx.route(re.compile(r'https://fonts\.(googleapis|gstatic)\.com/.*'), lambda r: r.fulfill(status=200, body='', content_type='text/css'))
     ctx.route(re.compile(r'https://cdn\.jsdelivr\.net/.*'), lambda r: r.fulfill(status=200, body='/* xlsx stub */', content_type='text/javascript', headers={'access-control-allow-origin': '*'}))
-    ctx.route(re.compile(r'https://(www\.google\.com|brasilapi\.com\.br)/.*'), lambda r: r.fulfill(status=200, body='external', content_type='text/plain'))
+    ctx.route(re.compile(r'https://(www\.google\.com|brasilapi\.com\.br|cnpj\.biz)/.*'), lambda r: r.fulfill(status=200, body='external', content_type='text/plain'))
     cfg = {'ns': ns, 'uid': UID}
     ctx.add_init_script(FAKE_JS + '\n;(function(c){ window.__saved = [];'
                         ' var f = FakeClaude.createFakeClaude({ backend: FakeClaude.createHttpBackend("/__fakedb", c.ns, 150), userId: c.uid, delayMs: 100, saved: window.__saved });'
@@ -364,7 +364,7 @@ def scenario_artifact(b):
     set_month(pg, '2026-08')
     check(pg.is_visible('#carry-line'), 'line back after resetting the start month')
 
-    section('1. Google + CNPJ help (artifact: link to BrasilAPI + "Colar CNAE")')
+    section('1. Google + CNPJ help (artifact: link to cnpj.biz + "Colar atividade ou CNAE")')
     drog = tx_by_raw(pg, 'JOSE FARMA LTDA 11.222.333/0001-81')[0]
     pg.click('#triage-banner [data-act="triage"]'); pg.wait_for_selector('#tri-card')
     check(triage_to(pg, drog['id']), 'triage reached the card with a CNPJ')
@@ -373,7 +373,9 @@ def scenario_artifact(b):
     gq = urllib.parse.unquote(g)
     check(g.startswith('https://www.google.com/search?q=') and 'JOSE FARMA' in gq and '0001' not in gq, f'"Pesquisar no Google" → {gq}')
     check(pg.get_attribute('#tri-google', 'target') == '_blank' and pg.get_attribute('#tri-google', 'rel') == 'noopener noreferrer', 'opens in a new tab, noopener noreferrer')
-    check(pg.get_attribute('#tri-cnpj', 'href') == 'https://brasilapi.com.br/api/cnpj/v1/11222333000181', 'artifact: "Consultar CNPJ" links to BrasilAPI (CSP: no fetch)')
+    check(pg.get_attribute('#tri-cnpj', 'href') == 'https://cnpj.biz/11222333000181', 'artifact: "Consultar CNPJ" opens a readable company page (cnpj.biz; no fetch)')
+    check('CNPJ 11.222.333/0001-81' in urllib.parse.unquote_plus(pg.get_attribute('#tri-cnpj-alt', 'href')), 'artifact: "Outra fonte" → Google search for the formatted CNPJ')
+    check('brasilapi' not in pg.inner_html('#tri-help'), 'no link to the JSON API')
     check('Nada é enviado' in pg.inner_text('#tri-help'), 'privacy hint shown')
     shot(pg, 'triage-help-light')
     no_hscroll(pg, 'triage with help')

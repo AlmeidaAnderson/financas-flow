@@ -464,3 +464,27 @@ input.invalid{border-color:var(--out)!important}
 .al-note{background:var(--accent-soft);color:var(--ink);border-radius:10px;padding:8px 10px}
 .hw.al .row{gap:6px}
 .acc-al .err-msg,#al-other-err{color:var(--out);font-weight:600}
+/* v2.4a: one account for the whole batch + per-file override */
+.bf-shared{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface-2);padding:12px}
+.bf-shared label{font-weight:650}
+.bf-inh{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0}
+.bf-inh .small{min-width:0;overflow-wrap:anywhere}
+.bf-newacc .form-grid{grid-template-columns:1fr 1fr}
+@media (max-width:420px){.bf-newacc .form-grid{grid-template-columns:1fr}}
+/* v2.4a: CNPJ card, "Gerenciar dados", selection in Transações */
+.cnpj-res dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:0;font-size:.85rem}
+.cnpj-res dt{color:var(--ink-3);font-weight:600}
+.cnpj-res dd{margin:0;overflow-wrap:anywhere}
+.help-links .xs{align-self:center}
+.man-sec{display:flex;flex-direction:column;gap:10px}
+.man-pick{display:flex;flex-direction:column;gap:6px}
+.man-opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--surface);cursor:pointer;text-align:left;width:100%;color:inherit;font:inherit}
+.man-opt[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent);background:var(--accent-soft)}
+.man-opt .grow{min-width:0;overflow-wrap:anywhere}
+.del-plan{display:flex;flex-direction:column;gap:8px;background:var(--out-soft);border:1px solid color-mix(in srgb,var(--out) 40%,transparent);border-radius:var(--r-m);padding:12px}
+.del-plan ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:2px;font-size:.88rem}
+.del-plan .num{font-weight:700}
+.sel-bar{position:sticky;top:calc(var(--topbar-h, 56px) + 6px);z-index:5;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-m);padding:10px 12px;box-shadow:var(--shadow);margin-bottom:10px}
+.tx .ck{flex:none;width:22px;height:22px;margin-top:6px;border-radius:6px;border:2px solid var(--line-2);display:grid;place-items:center;font-size:.8rem;font-weight:800;color:var(--accent-ink)}
+.tx[aria-pressed="true"] .ck{background:var(--accent);border-color:var(--accent)}
+.tx[aria-pressed="true"]{background:var(--accent-soft)}

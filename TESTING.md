@@ -48,8 +48,8 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
 
 ## v2.1 (5 features) — 10 min
 - [ ] **Não sabe o que é?** In triage / the editor of an uncategorized spending: "Pesquisar no Google" opens a new tab;
-      with a CNPJ in the description → "Consultar CNPJ" (Netlify: activity + category chip; Artifact: BrasilAPI page,
-      then paste the CNAE or the whole answer into "Colar CNAE" → chip). Nothing is categorized until you tap a chip.
+      with a CNPJ in the description → "Consultar CNPJ" (Netlify: activity + category chip; Artifact: company page,
+      now cnpj.biz (v2.4a), then paste the activity / page text into "Colar atividade ou CNAE" → chip). Nothing is categorized until you tap a chip.
 - [ ] **Parcelas**: classify one parcela of a Mercado Livre/Amazon purchase with "Lembrar" unticked → the other parcelas of
       THAT purchase get the category ("lembrado para esta compra (parcelas 3–10)"); another purchase at the same store
       does not. Desfazer removes it. Next month's fatura: the new parcela arrives already classified.
@@ -95,3 +95,23 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
 - Automated: `npm test` (test/engine_v23.test.js) and `python3 test/e2e/e2e_v23.py` (relógio fixo em 03/10/2026; Artifact +
   local mode, 390/1280, light/dark; segunda página sincronizada; leitura somente do snapshot real quando presente — só
   imprime os dias sugeridos). Screenshots: `screens/v23/`.
+
+## v2.4a — conta única no lote, CNPJ legível, Gerenciar dados (10 min)
+- [ ] **Vários arquivos**: Importar → escolha 3 arquivos → no topo, "Conta para todos os arquivos" → "+ Nova conta…" →
+      nome + tipo → Criar: todos os arquivos seguem. Num arquivo, "Alterar só este" → outra conta; "Voltar ao padrão" volta.
+      Escolha "+ Nova conta" com o mesmo nome em outro arquivo → usa a mesma (não cria outra). Um extrato com a conta de
+      todos sendo cartão → vai sozinho para a conta corrente (aviso azul) ou mostra o aviso vermelho com o conserto.
+      Importar → só UMA conta nova criada.
+- [ ] **CNPJ** (Artifact): "Consultar CNPJ" abre cnpj.biz (página legível); "Outra fonte" abre o Google. Copie a página
+      (ou só a atividade principal) e cole em "Colar atividade ou CNAE" → chip da categoria. Netlify: o resultado aparece
+      como um cartão (razão social, nome fantasia, atividade, cidade/UF), nunca JSON.
+- [ ] **Gerenciar dados** (Ajustes, ou Contas e importações → Importações): excluir um arquivo (e "todas as importações
+      deste arquivo"), um mês (todas as contas ou uma), uma conta (ou só os lançamentos dela). Antes de excluir aparecem
+      lançamentos, meses e soma; depois, "Desfazer" no aviso (e no topo de Gerenciar dados).
+- [ ] **Transações → Selecionar**: marque linhas ou "Todos do filtro" → "Mudar categoria" / "Excluir selecionados" → Desfazer.
+- [ ] Abra no celular: o que foi excluído não aparece, nem depois de editar algo do mesmo mês no celular.
+- Automated: `npm test` (test/engine_v24a.test.js) and `python3 test/e2e/e2e_v24a.py` (Artifact + fake db at 390 light full
+  flow incl. a second, stale page and a whole month emptied → Desfazer after the save; 390 dark / 1280 light / 1280 dark
+  screens; local mode 390 light full flow + 1280 dark; plans checked on the real snapshot when present — prints only counts;
+  Netlify build with /api/cnpj mocked, CSP on).
+  Screenshots: `screens/v24a/`.

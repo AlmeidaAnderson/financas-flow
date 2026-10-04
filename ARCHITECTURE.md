@@ -59,7 +59,7 @@ The "local" adapter (localStorage) is used for dev, tests and when not signed in
   `{cnpj, cached, razao_social, nome_fantasia, cnae_fiscal, cnae_fiscal_descricao, municipio, uf}`; cached 30 days in the
   blob `cache/cnpj/<14 digits>` (public company data, shared across users). Called only when the user taps "Consultar
   CNPJ" (`store.lookupCnpj(cnpj)`, netlify adapter only). The Artifact build cannot reach other hosts: it links to
-  BrasilAPI and offers a "Colar CNAE" field instead (`FinEngine.suggestFromCNAE`).
+  a company page (v2.4a: cnpj.biz; before: BrasilAPI) and offers a "Colar CNAE" field instead (`FinEngine.suggestFromCNAE`).
 - **Transactions** may carry `balance` (cents; running balance when the file has a "Saldo" column) and `catSource: "series"`.
 - **Rules**: `{origin:"installment", seriesKey, series:{merchant,start,total,amount}, set:{categoryId}, expiresAfter:"YYYY-MM", updatedAt}`
   remembers one installment purchase (classify priority: manual > installment series > user rules > learned > dictionary);
@@ -126,3 +126,32 @@ The "local" adapter (localStorage) is used for dev, tests and when not signed in
   with the dd/mm/aaaa field, Ignorar este ciclo, Configurar conta), "Alertas de atualização" per account in Contas e
   importações. Recomputed after every commit and when the device's date changes (memo key = data version + local date).
   No browser notifications.
+
+## v2.4a additions — batch account, CNPJ page, "Gerenciar dados"
+- **Batch import account** (app only, no data-shape change): `S.imp.batch.shared` = "Conta para todos os arquivos"; a file
+  follows it unless it has `it.ov = { id, auto, note }` ("Alterar só este" → manual; auto = layout suggestion before the user
+  touches the shared selector, or the file's kind (fatura/extrato) mismatching the shared account's type when exactly one
+  fitting account exists / the layout's account fits). Shared pre-fill: step-1 account the user picked > the alert's account >
+  the recognized layouts' `defaultAccountId` when they all agree. "+ Nova conta" (top or a row) adds a PENDING account
+  `__nova:N` to `batch.newAccs` (listed in every selector); the same name (normalized) reuses the pending or existing account;
+  "Importar" creates each used pending account once (`addAccount`).
+- **CNPJ help**: Artifact build (and Netlify when signed out) links "Consultar CNPJ" to `https://cnpj.biz/<14 digits>` plus a
+  small "Outra fonte" (Google "CNPJ <formatted>"); no user-facing link to a JSON API. The paste box ("Colar atividade ou
+  CNAE") accepts page text: `suggestFromCNAE` first looks for strict codes (`47.71-7-01`, `4771-7/01`, `47.71-7/01`), the one
+  after "principal" winning; long text without a code only uses the activity text after "principal" (never a CNPJ/CEP/phone).
+  Netlify build: `/api/cnpj` unchanged; the answer is shown as a card (razão social, nome fantasia, atividade principal +
+  CNAE, cidade/UF).
+- **Gerenciar dados** (Ajustes and Contas e importações → Importações): delete by file (one import, or every import with the
+  same `fileName`), by month (+ optional account), an account (or only its rows), or a selection in Transações ("Selecionar",
+  "Todos do filtro", "Excluir selecionados", "Mudar categoria"). Each shows an in-page plan (rows, months, sum, accounts,
+  imports/account touched) before deleting, then a toast "Desfazer" (10 s) and a "Desfazer" banner in the sheet (last 5
+  deletions, this session only: rows re-saved with a new `updatedAt`, newer than their tombstones; meta records restored).
+  Deletes use `commit({ remove })` → rows left out of `saveMonth` / `deleteMonth` when a month empties → store tombstones (a
+  stale device's save of the month cannot resurrect them). "Excluir importação" in Contas e importações uses the same path.
+- Engine: `selectForDeletion(transactions, { ids?, importIds?, fileName?, month?, accountId? }, imports)` →
+  `{ ids, rows, count, months, sum, accounts, importIds }`; `applyDeletion({ transactions, imports, rules, accounts, profiles,
+  settings }, ids, { removeAccountIds, now })` → remaining rows + `changed` (dangling `linkedTo` cleared), import records left
+  without rows removed (others get count/total/from/to of what is left), installment-series rules that only matched removed
+  rows removed, `settings.dismissedAlerts` of removed accounts cleared, profiles' `defaultAccountId` of removed accounts
+  cleared; `meta` = changed doc names. `dataIntegrity({ transactions, imports, accounts })` → orphan_import, import_count,
+  import_account, unknown_account, dangling_link.

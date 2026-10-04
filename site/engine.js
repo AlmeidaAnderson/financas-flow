@@ -2151,6 +2151,123 @@
       .map(t => ({ id: t.id, deleted: true, updatedAt: now, date: t.date }));
   }
 
+  // ---------------------------------------------------------------------------
+  // v2.4a — "Gerenciar dados": what a deletion removes, and the data left consistent after it
+  // ---------------------------------------------------------------------------
+  /** Live rows matched by sel = { ids?, importIds?, fileName?, month?: 'YYYY-MM', accountId? } (criteria combine with
+   *  AND; fileName = every import record with that exact file name). No criteria → nothing.
+   *  -> { ids, rows, count, months, sum, accounts, importIds } */
+  function selectForDeletion(transactions, sel, imports) {
+    sel = sel || {};
+    let impSet = null;
+    if (Array.isArray(sel.importIds) || sel.fileName != null) {
+      impSet = new Set(sel.importIds || []);
+      if (sel.fileName != null) Object.values(imports || {}).forEach(r => { if (r && r.id && r.fileName === sel.fileName) impSet.add(r.id); });
+    }
+    const idSet = Array.isArray(sel.ids) ? new Set(sel.ids) : null;
+    const empty = { ids: [], rows: [], count: 0, months: [], sum: 0, accounts: [], importIds: [] };
+    if (!impSet && !idSet && !sel.month && !sel.accountId) return empty;
+    const rows = (transactions || []).filter(t => t && !t.deleted && t.id
+      && (!idSet || idSet.has(t.id))
+      && (!impSet || impSet.has(t.importId))
+      && (!sel.month || String(t.date || '').slice(0, 7) === sel.month)
+      && (!sel.accountId || t.accountId === sel.accountId));
+    const uniq = list => [...new Set(list.filter(x => x != null && x !== ''))].sort();
+    return {
+      ids: rows.map(t => t.id), rows, count: rows.length,
+      months: uniq(rows.map(t => String(t.date || '').slice(0, 7))),
+      sum: rows.reduce((a, t) => a + (t.amount || 0), 0),
+      accounts: uniq(rows.map(t => t.accountId)), importIds: uniq(rows.map(t => t.importId))
+    };
+  }
+
+  /** Removes the rows `ids` (and the accounts opts.removeAccountIds) and cleans what depended on them:
+   *  links to removed rows (linkedTo), import records left without rows (others get count/total/from/to of what is
+   *  left), installment-series rules that only matched removed rows, dismissed alerts of removed accounts, profiles'
+   *  defaultAccountId pointing to a removed account. Pure: returns new values; the caller saves them.
+   *  data = { transactions, imports, rules, accounts, profiles, settings }
+   *  -> { transactions (live, remaining), removed: rows, changed: rows (remaining rows that changed), imports, rules,
+   *       accounts, profiles, settings, meta: [changed meta doc names], report: { importsRemoved, importsUpdated,
+   *       rulesRemoved, accountsRemoved, profilesUpdated, alertsCleared } } */
+  function applyDeletion(data, ids, opts) {
+    data = data || {}; opts = opts || {};
+    const now = opts.now || new Date().toISOString();
+    const del = new Set(ids || []);
+    const rmAcc = new Set(opts.removeAccountIds || []);
+    const all = (data.transactions || []).filter(t => t && !t.deleted);
+    const removed = all.filter(t => del.has(t.id));
+    const changed = [];
+    const remaining = all.filter(t => !del.has(t.id)).map(t => {
+      if (!t.linkedTo || !del.has(t.linkedTo)) return t;
+      const u = Object.assign({}, t, { updatedAt: now }); delete u.linkedTo; changed.push(u); return u;
+    });
+    const meta = new Set();
+    const report = { importsRemoved: [], importsUpdated: [], rulesRemoved: [], accountsRemoved: [], profilesUpdated: [], alertsCleared: [] };
+    // import records
+    const imports = Object.assign({}, data.imports || {});
+    const touched = new Set(removed.map(t => t.importId).filter(Boolean));
+    Object.values(imports).forEach(r => { if (r && r.id && rmAcc.has(r.accountId)) touched.add(r.id); });
+    const byImp = new Map();
+    remaining.forEach(t => { if (t.importId && touched.has(t.importId)) { if (!byImp.has(t.importId)) byImp.set(t.importId, []); byImp.get(t.importId).push(t); } });
+    for (const id of touched) {
+      const r = imports[id]; if (!r) continue;
+      const left = byImp.get(id) || [];
+      if (!left.length || rmAcc.has(r.accountId)) { delete imports[id]; report.importsRemoved.push(id); continue; }
+      const dts = left.map(t => t.date).sort();
+      imports[id] = Object.assign({}, r, { count: left.length, total: left.reduce((a, t) => a + (t.amount || 0), 0), from: dts[0] || null, to: dts[dts.length - 1] || null, updatedAt: now });
+      report.importsUpdated.push(id);
+    }
+    if (report.importsRemoved.length || report.importsUpdated.length) meta.add('imports');
+    // installment-series rules that only pointed at removed rows
+    const rules = (data.rules || []).filter(r => {
+      if (!r || r.origin !== 'installment') return true;
+      if (!removed.some(t => seriesMatches(r, t))) return true;
+      if (remaining.some(t => seriesMatches(r, t))) return true;
+      report.rulesRemoved.push(r.id || r.seriesKey); return false;
+    });
+    if (report.rulesRemoved.length) meta.add('rules');
+    // accounts, profiles, dismissed alerts
+    const accounts = (data.accounts || []).filter(a => { if (a && rmAcc.has(a.id)) { report.accountsRemoved.push(a.id); return false; } return true; });
+    if (report.accountsRemoved.length) meta.add('accounts');
+    const profiles = (data.profiles || []).map(p => {
+      if (!p || !p.defaultAccountId || !rmAcc.has(p.defaultAccountId)) return p;
+      const u = Object.assign({}, p, { updatedAt: now }); delete u.defaultAccountId; report.profilesUpdated.push(p.id); return u;
+    });
+    if (report.profilesUpdated.length) meta.add('profiles');
+    let settings = data.settings || {};
+    const da = Array.isArray(settings.dismissedAlerts) ? settings.dismissedAlerts : [];
+    const keep = da.filter(a => !rmAcc.has(String(a).split(':')[1]));
+    if (keep.length !== da.length) {
+      report.alertsCleared = da.filter(a => !keep.includes(a));
+      settings = Object.assign({}, settings, { dismissedAlerts: keep, updatedAt: now });
+      meta.add('settings');
+    }
+    return { transactions: remaining, removed, changed, imports, rules, accounts, profiles, settings, meta: [...meta], report };
+  }
+
+  /** Consistency check of the stored data (used after deletions and by tests).
+   *  -> [{ kind: orphan_import|import_count|import_account|unknown_account|dangling_link, id }] */
+  function dataIntegrity(data) {
+    data = data || {};
+    const live = (data.transactions || []).filter(t => t && !t.deleted);
+    const accIds = new Set((data.accounts || []).map(a => a && a.id));
+    const rowIds = new Set(live.map(t => t.id));
+    const per = {};
+    live.forEach(t => { if (t.importId) per[t.importId] = (per[t.importId] || 0) + 1; });
+    const out = [];
+    Object.values(data.imports || {}).forEach(r => {
+      if (!r || !r.id) return;
+      if (!per[r.id]) out.push({ kind: 'orphan_import', id: r.id });
+      else if (typeof r.count === 'number' && r.count !== per[r.id]) out.push({ kind: 'import_count', id: r.id });
+      if (r.accountId && !accIds.has(r.accountId)) out.push({ kind: 'import_account', id: r.id });
+    });
+    live.forEach(t => {
+      if (t.accountId && !accIds.has(t.accountId)) out.push({ kind: 'unknown_account', id: t.id });
+      if (t.linkedTo && !rowIds.has(t.linkedTo)) out.push({ kind: 'dangling_link', id: t.id });
+    });
+    return out;
+  }
+
   function importLabel(txs, importId) {
     if (/^payslip|^hol-/.test(importId)) return 'Holerite';
     if (importId === 'exemplo') return 'Dados de exemplo';
@@ -2398,6 +2515,35 @@
     if (d.length === 4) return d.slice(0, 2) + '.' + d.slice(2);
     return d;
   }
+  /** strict CNAE codes in a pasted page text ("47.71-7-01", "4771-7/01", "47.71-7/01"); the one after "atividade
+   *  principal" / "CNAE principal" wins, else the first. -> { digits, desc, long, segment } */
+  function cnaeFromPageText(text) {
+    const s = String(text || '');
+    const long = s.length > 60 || /\n/.test(s);
+    const re = /(?<![\d./-])(\d{2})\.?(\d{2})-(\d)[-/](\d{2})(?![\d/])/g;
+    const up = stripAccents(s).toUpperCase();
+    const pIdx = up.search(/PRINCIPAL/);
+    const secIdx = pIdx >= 0 ? up.slice(pIdx).search(/SECUNDARI/) : -1;
+    const hits = [];
+    let m;
+    while ((m = re.exec(s))) hits.push({ i: m.index, end: m.index + m[0].length, digits: m[1] + m[2] + m[3] + m[4] });
+    let pick = null;
+    if (hits.length) {
+      pick = pIdx >= 0 ? (hits.find(h => h.i > pIdx && (secIdx < 0 || h.i < pIdx + secIdx)) || hits.find(h => h.i > pIdx)) : null;
+      pick = pick || hits[0];
+    }
+    if (pick) {
+      const after = s.slice(pick.end, pick.end + 220).split(/\n/)[0].replace(/^[\s\-–—:]+/, '').trim();
+      return { digits: pick.digits, desc: after.length >= 4 ? after : null, long, segment: null };
+    }
+    let segment = null;
+    if (pIdx >= 0) {
+      const rest = s.slice(pIdx + 'PRINCIPAL'.length);
+      const stop = stripAccents(rest).toUpperCase().search(/SECUNDARI|NATUREZA JURIDICA|ENDERECO|LOGRADOURO/);
+      segment = (stop > 0 ? rest.slice(0, stop) : rest.slice(0, 220)).replace(/^[\s:\-–—)]+/, '').trim() || null;
+    }
+    return { digits: null, desc: null, long, segment };
+  }
   /** "4771-7/01", "47.71-7-01", "4771701", a pasted BrasilAPI JSON, or a text with a code / an activity description
    *  -> { code, description?, categoryId, confidence } | null. Only a suggestion: the app shows it as a chip. */
   function suggestFromCNAE(input) {
@@ -2415,7 +2561,15 @@
       const jm = /"?cnae_fiscal"?\s*:\s*"?(\d{7})/.exec(s);
       if (jm) { digits = jm[1]; const dm = /"?cnae_fiscal_descricao"?\s*:\s*"([^"]+)"/.exec(s); if (dm) desc = dm[1]; }
     }
+    let pageText = false;
     if (!digits) {
+      // text copied from a company page (cnpj.biz, Receita, Google): a strict CNAE code near "principal", else the
+      // activity text after it. The loose code match below would take a CNPJ, CEP or phone number on such a page.
+      const pt = cnaeFromPageText(s);
+      if (pt.digits) { digits = pt.digits; desc = pt.desc || null; }
+      else if (pt.long) { pageText = true; if (pt.segment) s = pt.segment; }
+    }
+    if (!digits && !pageText) {
       const m = /(?<!\d)(\d{2})\.?(\d{2})-?(\d)(?:\s*[/-]\s*(\d{2}))?(?!\d)/.exec(s);
       if (m && (m[0].length >= 6 || /[.\-/]/.test(m[0]))) digits = m[1] + m[2] + m[3] + (m[4] || '');
       else if (/^\d[\d.\-/\s]*$/.test(s) && s.replace(/\D/g, '').length >= 2 && s.replace(/\D/g, '').length <= 7) digits = s.replace(/\D/g, '');
@@ -3658,7 +3812,7 @@
 
   // ---------------------------------------------------------------------------
   const FinEngine = {
-    version: '2.3.0',
+    version: '2.4.0',
     decodeBytes, analyzeTable, analyzeRows, profileFromAnalysis, applyProfile, matchProfile,
     parseAmount, detectNumberFormat, parseDate, normalizeDescription,
     DEFAULT_CATEGORIES, DEFAULT_DICTIONARY,
@@ -3676,6 +3830,8 @@
     NAO_ID, ensureBuiltinCategories, periodOf, categorySeries, categorySeriesKey, ingest, batchOrder, importBatch,
     // v2.3
     cardCycles, updateAlerts, inferCardDays, fileDates, cycleOfImport,
+    // v2.4a
+    selectForDeletion, applyDeletion, dataIntegrity,
     lookupDictionaryEntry: (d, m, r, a) => lookupDictionaryEntry(d || DEFAULT_DICTIONARY, m, r, a),
     // extras (helpers, stable but not part of the contract)
     _internal: { parseDelimited, detectDelimiter, detectDateFormat, norm, stripAccents, hashStr, SKIP_PATTERNS, parseInstallmentText, detectKind }

@@ -239,7 +239,7 @@ def scenario_real_data(b):
         check(J(pg, '() => __ff.D().imports["%s"].accountId' % REALIDS['bank']) == (newacc or {}).get('id'), 'imports record points to the new account')
         pg.click(f'.imp-row[data-imp="{REALIDS["card"]}"] [data-act="imp-del"]')
         pg.wait_for_selector('#del-box')
-        check('Não dá para desfazer' in pg.inner_text('#del-box'), 'in-page delete confirmation')
+        check('Dá para desfazer' in pg.inner_text('#del-box') and 'soma' in pg.inner_text('#del-box'), 'in-page delete confirmation (months, sum, undo hint)')
         pg.click('#del-confirm')
         pg.wait_for_timeout(300)
         check(len(find(pg, 't => t.importId === "%s"' % REALIDS['card'])) == 0, 'card import deleted (its transactions are gone from every view)')
