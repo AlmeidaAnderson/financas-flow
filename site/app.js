@@ -2292,6 +2292,7 @@ function fileErrMsg(e){
   if(c==='pdf_no_text') return 'este PDF é só imagem (foi digitalizado ou salvo como foto) e não tem texto para ler. Ainda não dá para importar PDFs assim: baixe o PDF original no app ou site do banco, ou exporte em CSV/XLSX.';
   if(c==='pdf_password_wrong') return 'senha do PDF incorreta.';
   if(c==='pdf_invalid') return 'o arquivo não parece um PDF válido (corrompido ou incompleto).';
+  if(c==='pdf_load_cdn') return 'o leitor de PDF não carregou: nem o cdnjs nem o jsDelivr responderam. Confira a conexão (ou se uma rede/extensão bloqueia esses sites) e tente de novo. Enquanto isso, dá para importar o extrato em CSV/XLSX.';
   if(c==='pdf_unavailable' || c==='pdf_load') return 'o leitor de PDF não carregou. Confira a conexão e tente de novo.';
   return (e && e.message || String(e)) + '.';
 }
@@ -2301,25 +2302,40 @@ function fileErrMsg(e){
    is loaded as a plain <script> so globalThis.pdfjsWorker exists and pdf.js parses in this thread (no cross-origin worker). */
 const PDFJS_VER = '3.11.174';
 const PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/' + PDFJS_VER + '/';
+// fallback (also on the Artifact allowlist): the same files of the pinned npm package (pdfjs-dist/build/)
+const PDFJS_CDN2 = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@' + PDFJS_VER + '/build/';
 let _pdfjs = null;
-function loadScriptOnce(src, cross){
+function loadScriptOnce(src, cross, timeoutMs){
   const have = Array.from(document.scripts).find(x => x.src === src);
   if(have && have.dataset.loaded) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const el = document.createElement('script');
+    let timer = null;
+    const fail = why => { clearTimeout(timer); el.remove(); const e = new Error('não carregou ' + src + (why ? ' (' + why + ')' : '')); e.code = 'pdf_load'; reject(e); };
     el.src = src; el.async = true; if(cross) el.crossOrigin = 'anonymous';
-    el.addEventListener('load', () => { el.dataset.loaded = '1'; resolve(); }, { once: true });
-    el.addEventListener('error', () => { el.remove(); const e = new Error('não carregou ' + src); e.code = 'pdf_load'; reject(e); }, { once: true });
+    el.addEventListener('load', () => { clearTimeout(timer); el.dataset.loaded = '1'; resolve(); }, { once: true });
+    el.addEventListener('error', () => fail(''), { once: true });
+    if(timeoutMs) timer = setTimeout(() => fail('tempo esgotado'), timeoutMs);
     document.head.appendChild(el);
   });
+}
+/** the first host that serves the file; each file falls back on its own (cdnjs → jsDelivr) */
+async function loadFromCdns(file, check){
+  let last = null;
+  for(const base of [PDFJS_CDN, PDFJS_CDN2]){
+    try { await loadScriptOnce(base + file, true, 60000); if(!check || check()) return base; last = new Error('arquivo incompleto em ' + base); }
+    catch(e){ last = e; }
+  }
+  const e = new Error('o leitor de PDF (pdf.js) não carregou de nenhum dos servidores (cdnjs e jsDelivr)' + (last ? ': ' + last.message : ''));
+  e.code = 'pdf_load_cdn';
+  throw e;
 }
 function loadPdfJs(){
   if(_pdfjs) return _pdfjs;
   _pdfjs = (async () => {
     if(window.FINSTORE_BUILD === 'artifact'){
-      await loadScriptOnce(PDFJS_CDN + 'pdf.min.js', true);
-      await loadScriptOnce(PDFJS_CDN + 'pdf.worker.min.js', true);
-      if(!window.pdfjsWorker || !window.pdfjsWorker.WorkerMessageHandler){ const e = new Error('leitor de PDF incompleto'); e.code = 'pdf_load'; throw e; }
+      await loadFromCdns('pdf.min.js', () => window.pdfjsLib && typeof window.pdfjsLib.getDocument === 'function');
+      await loadFromCdns('pdf.worker.min.js', () => window.pdfjsWorker && window.pdfjsWorker.WorkerMessageHandler);
     } else {
       await loadScriptOnce(new URL('vendor/pdf.min.js', document.baseURI).href);
       if(window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('vendor/pdf.worker.min.js', document.baseURI).href;

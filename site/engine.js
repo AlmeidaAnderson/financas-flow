@@ -4013,6 +4013,50 @@
     return out;
   }
 
+  /** pages printed in two (or more) side-by-side columns of records ("jornal"): a line that holds a complete record (date …
+   *  amount) and then ANOTHER record starting with a date further right is two lines. When ≥ 3 lines of a page split at the
+   *  same x, every line of that page is cut there and the right column is read after the left one. Two date columns of the
+   *  same record ("05/09  06/09  LOJA  10,00") never split: the left part has no amount. */
+  function pdfColumns(lines) {
+    const byPage = new Map();
+    for (const l of lines) { if (!byPage.has(l.page)) byPage.set(l.page, []); byPage.get(l.page).push(l); }
+    const hasMoney = segs => segs.some(s => { MONEY_RE.lastIndex = 0; return MONEY_RE.test(fold(s.str)); });
+    const isDate = s => LEAD_DATE_RE.test(fold(s.str));
+    const out = [];
+    for (const [, pl] of byPage) {
+      const cuts = [];
+      for (const l of pl) {
+        for (let k = 2; k < l.segs.length - 1; k++) {
+          if (!isDate(l.segs[k])) continue;
+          const left = l.segs.slice(0, k), right = l.segs.slice(k);
+          if (isDate(left[0]) && hasMoney(left) && hasMoney(right) && l.segs[k].x - left[left.length - 1].x2 >= 8) { cuts.push(l.segs[k].x); break; }
+        }
+      }
+      let cut = null;
+      if (cuts.length >= 3) {
+        cuts.sort((a, b) => a - b);
+        const med = cuts[Math.floor(cuts.length / 2)];
+        if (cuts.filter(x => Math.abs(x - med) <= 12).length >= Math.max(3, cuts.length * 0.7)) cut = Math.min(...cuts.filter(x => Math.abs(x - med) <= 12)) - 3;
+      }
+      if (cut == null) { out.push(...pl); continue; }
+      const mk = (l, segs) => {
+        let text = '';
+        const offs = [];
+        segs.forEach((s, i) => { if (i) text += '   '; offs.push(text.length); text += s.str; });
+        return { page: l.page, y: l.y, h: l.h, x: segs[0].x, x2: segs[segs.length - 1].x2, segs, text, offs, col: 0 };
+      };
+      const L = [], R = [];
+      for (const l of pl) {
+        const a = l.segs.filter(s => s.x < cut), b = l.segs.filter(s => s.x >= cut);
+        // a segment crossing the gutter (a title over both columns) keeps the line whole
+        if (!a.length || !b.length || a.some(s => s.x2 > cut + 2)) { (a.length ? L : R).push(l); continue; }
+        L.push(mk(l, a)); const r = mk(l, b); r.col = 1; R.push(r);
+      }
+      out.push(...L, ...R);
+    }
+    return out;
+  }
+
   const MON_ALT = 'JAN(?:EIRO)?|FEV(?:EREIRO)?|MAR(?:CO)?|ABR(?:IL)?|MAI(?:O)?|JUN(?:HO)?|JUL(?:HO)?|AGO(?:STO)?|SET(?:EMBRO)?|OUT(?:UBRO)?|NOV(?:EMBRO)?|DEZ(?:EMBRO)?|FEB|APR|MAY|AUG|SEP|OCT|DEC';
   // a date at the start of a line: 03/10, 03/10/26, 03/10/2026, 03.10, 03-10-2026, 3 outubro 2026, 03 OUT, 03/out, 3 de outubro de 2026
   const LEAD_DATE_RE = new RegExp('^\\s*(\\d{1,2}[\\/.\\-]\\d{1,2}(?:[\\/.\\-](?:\\d{4}|\\d{2}))?|\\d{1,2}\\s*(?:DE\\s+)?[\\/\\- ]?\\s*(?:' + MON_ALT + ')\\.?(?:\\s*(?:DE\\s+)?[\\/\\- ]?\\s*(?:\\d{4}|\\d{2}(?!\\d|[.,:]\\d)))?)(?![\\d/.,]?\\d)(?=\\s|$|[^A-Z0-9])');
@@ -4025,7 +4069,7 @@
   const TIME_IN_RE = /(?<![\d:])([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?(?![\d:])/;
   const INST_IN_RE = /\bPARC(?:ELA)?S?\.?\s*(\d{1,2})\s*(?:\/|DE|OF)\s*(\d{1,3})\b/;
   const INST_SEG_RE = /^(?:PARC(?:ELA)?\.?\s*)?(\d{1,2})\s*(?:\/|DE|OF)\s*(\d{1,3})$/;
-  const HEADER_WORD_RE = /^(?:DATA|DT|DIA|DESCRICAO|HISTORICO|LANCAMENTOS?|MOVIMENTACOES|MOVIMENTACAO|ESTABELECIMENTO|TRANSACAO|TRANSACOES|DETALHES?|VALOR(?:ES)?|VALOR EM R\$|VALOR \(R\$\)|R\$|US\$|SALDO|SALDO \(R\$\)|PARCELAS?|DOCUMENTO|DOC|N[OºO°]? DOC|CREDITO|DEBITO|CREDITOS|DEBITOS|ENTRADAS?|SAIDAS?|MOEDA|COTACAO|CATEGORIA|TIPO|HORA|ORIGEM|DESTINO|CIDADE|PAIS)\b/;
+  const HEADER_WORD_RE = /^(?:DATA|DT|DIA|DESCRICAO|HISTORICO|LANCAMENTOS?|MOVIMENTACOES|MOVIMENTACAO|ESTABELECIMENTO|TRANSACAO|TRANSACOES|DETALHES?|VALOR(?:ES)?|VALOR EM R\$|VALOR \(R\$\)|R\$|US\$|SALDO|SALDO \(R\$\)|PARCELAS?|DOCUMENTO|DOC|N[OºO°]? DOC|CREDITO|DEBITO|CREDITOS|DEBITOS|ENTRADAS?|SAIDAS?|MOEDA|COTACAO|CATEGORIA|TIPO|HORA|ORIGEM|DESTINO|CIDADE|PAIS)(?![A-Z0-9])/;
   // non-transaction regions (by section title) and lines
   const SKIP_SECTIONS = [
     ['futuras', /LANCAMENTOS FUTUROS|PROXIMAS? FATURAS?|FATURAS? FUTURAS?|PARCELAS? (?:A VENCER|FUTURAS|RESTANTES)|COMPRAS PARCELADAS\b.*\b(?:PROXIM|FUTUR|A VENCER)|\bA VENCER\b|PREVISAO|AGENDAMENTOS?|PROGRAMADOS?/],
@@ -4155,7 +4199,7 @@
           if (d) meta[key] = d;
         }
         // totals
-        if (meta.total == null && /\b(?:TOTAL\s+(?:A\s+PAGAR|DESTA\s+FATURA|DA\s+FATURA(?!\s+(?:DE|DO\s+MES)\s+[A-Z]+)|DA\s+SUA\s+FATURA)|VALOR\s+(?:TOTAL\s+)?(?:DA\s+FATURA|A\s+PAGAR)|VALOR\s+TOTAL\s+DESTA\s+FATURA)\b/.test(f)) {
+        if (meta.total == null && /\b(?:TOTAL\s+(?:A\s+PAGAR|DESTA\s+FATURA|DA\s+FATURA(?!\s+(?:DE|DO\s+MES)\s+[A-Z]+)|DA\s+SUA\s+FATURA)|VALOR\s+(?:TOTAL\s+)?(?:DA\s+FATURA|A\s+PAGAR)|VALOR\s+TOTAL\s+DESTA\s+FATURA)\b|^\s*(?:VALOR\s+TOTAL|TOTAL\s+DA\s+FATURA)\s*:?\s*$/.test(f)) {
           const v = labelValue(lines, i, si, labelEndOf(f), isMoneyStr);
           const val = moneyOf(v, opts);
           if (val != null) meta.total = val;
@@ -4224,7 +4268,7 @@
     const items = isArr(input) ? input : (input && input.items) || [];
     const pageSizes = (input && input.pageSizes) || [];
     const nPages = (input && input.pages) || items.reduce((a, i) => Math.max(a, i.page || 1), 0) || 1;
-    const lines = pdfLines(items);
+    const lines = pdfColumns(pdfLines(items));
     const allText = fold(lines.map(l => l.text).join('\n'));
     const tokCtx = { dollar: /\bDOLAR|\bDOLLAR/.test(allText), numberFormat: null };
     // number format: BR unless the amounts say otherwise
@@ -4258,6 +4302,21 @@
       if (lead) {
         const p = parseDateParts(lead[1].replace(/\s+/g, ' '), 'DD/MM/YYYY');
         if (p) l.date = { p, start: off + lead.index, end: off + lead.index + lead[0].length };
+      } else if (l.segs.length >= 2) {
+        // layouts with the amount (or a document number) before the date: "1.234,56 D   05.09.2026   HISTÓRICO"
+        for (let k = 0; k < Math.min(l.segs.length - 1, 2); k++) {
+          const sf = fold(l.segs[k].str).trim();
+          MONEY_RE.lastIndex = 0;
+          const mm = MONEY_RE.exec(sf);
+          const onlyMoney = mm && mm.index === 0 && mm[0].trim().length === sf.length;
+          if (!onlyMoney && !/^\d{1,10}$/.test(sf)) break;
+          const at = l.offs[k + 1];
+          const ld = LEAD_DATE_RE.exec(f.slice(at));
+          if (ld) {
+            const p = parseDateParts(ld[1].replace(/\s+/g, ' '), 'DD/MM/YYYY');
+            if (p) { l.date = { p, start: at + ld.index, end: at + ld.index + ld[0].length, late: true }; break; }
+          }
+        }
       }
       const rest = l.date ? f.slice(l.date.end) : f;
       const letters = (rest.match(/[A-Z]/g) || []).length;
@@ -4372,13 +4431,21 @@
       else if (!dateP) reason = 'sem_data';
       else if (!amtToks.length) reason = l.toks.some(t => tokRole(t) === 'balance') ? 'saldos' : 'sem_data';
       if (reason) { exclude(reason, l); continue; }
-      const rec = { line: l, page: l.page, y: l.y, dateP, desc: descRaw, details: [], section, toks: l.toks, descX: descStartX(l), rates: l.rates.slice() };
+      const rec = { line: l, page: l.page, y: l.y, dateP, desc: descRaw, details: [], section, toks: l.toks, descX: descStartX(l), descSegX: descSegX(l), rates: l.rates.slice() };
       records.push(rec);
       last = rec;
     }
     // 5. finish records: details (time, wallet, parcela, foreign amount, rate), amounts, signs
     const ref = meta.ref || latestFullDate(lines) || opts.today || todayLocal();
     for (const r of records) {
+      // a description wrapped to the next line(s): plain text (no amount, time, parcela, wallet) starting where the
+      // description starts → part of the description, not a detail
+      for (const d of r.details) {
+        const df = fold(d.text);
+        if (d.toks.length || d.rates.length || TIME_IN_RE.test(df) || INST_IN_RE.test(df) || (isBenefit && WALLET_RE.test(df)) || r.descSegX == null || Math.abs(d.x - r.descSegX) > 4) break;
+        r.desc = (r.desc + ' ' + d.text.replace(/\s{2,}/g, ' ')).trim(); d.cont = true;
+      }
+      r.details = r.details.filter(d => !d.cont);
       const dtext = r.details.map(d => d.text).join(' · ');
       const fAll = fold(r.line.text + ' ' + dtext);
       for (const d of r.details) { r.toks = r.toks.concat(d.toks); r.rates = r.rates.concat(d.rates); }
@@ -4436,6 +4503,19 @@
         prev = r;
       }
     }
+    // parcelas: most faturas print the PURCHASE date of a parcela (booked on import in the parcela's month); some print the
+    // date it was posted in this fatura. When shifting the printed dates would push most parcelas past the due date (or
+    // past the cycle / the other purchases), the printed date is the posting date: give the table the purchase date.
+    let instPosted = false;
+    if (kind === 'fatura') {
+      const instR = records.filter(r => r.inst && r.inst.n > 1 && r.date);
+      const plain = records.filter(r => !r.inst && r.date).map(r => r.date).sort();
+      const lim = meta.dueDate || (meta.cycleEnd && addDays(meta.cycleEnd, 12)) || (plain.length ? addDays(plain[plain.length - 1], 12) : null);
+      if (lim && instR.length && instR.filter(r => shiftDateMonths(r.date, r.inst.n - 1) > lim).length > instR.length / 2) {
+        instPosted = true;
+        for (const r of instR) { r.postedDate = r.date; r.date = shiftDateMonths(r.date, -(r.inst.n - 1)); }
+      }
+    }
     // 6. the reconstructed table
     const hasInst = records.some(r => r.inst), hasTime = records.some(r => r.time), hasFx = records.some(r => r.fx), hasRate = records.some(r => r.fx && r.fx.rate);
     const hasSection = records.some(r => r.section), hasDetail = records.some(r => r.details.length), hasWallet = records.some(r => r.wallet), hasBal = records.some(r => r.balance != null);
@@ -4474,7 +4554,7 @@
     const exList = Object.values(excluded).sort((a, b) => b.count - a.count);
     if (repeatedCount && !excluded.cabecalho) exList.push({ reason: 'cabecalho', label: SECTION_REASON_LBL.cabecalho, count: repeatedCount, samples: [...new Set(lines.filter(l => l.repeat).map(l => l.text))].slice(0, 4) });
     const pdf = {
-      kind, meta, excluded: exList, sections, pages: nPages, currency: docCurrency, lineCount: lines.length,
+      kind, meta, excluded: exList, sections, pages: nPages, installmentPosted: instPosted, currency: docCurrency, lineCount: lines.length,
       accountType: kind === 'fatura' ? 'credit_card' : kind === 'beneficio' ? 'benefit' : kind === 'extrato' ? 'checking' : null,
       records: records.map((r, k) => ({ row: k + 1, page: r.page, section: r.section || null, date: r.date, amount: r.amount, inst: r.inst, time: r.time, wallet: r.wallet || null, fx: r.fx, balance: r.balance }))
     };
@@ -4512,6 +4592,17 @@
     for (const [a, b] of cut) { if (a > pos) out += l.text.slice(pos, a) + ' '; pos = Math.max(pos, b); }
     out += l.text.slice(pos);
     return out.replace(/\s+/g, ' ').replace(/^[\s•·|\-–—:]+|[\s•·|\-–—:]+$/g, '').trim();
+  }
+  /** x of the description segment of a record line (the first text segment that is not the date or an amount) */
+  function descSegX(l) {
+    for (let k = 0; k < l.segs.length; k++) {
+      const a = l.offs[k], b = a + l.segs[k].str.length;
+      if (l.date && a < l.date.end && b > l.date.start && b <= l.date.end + 1) continue;
+      if (l.toks && l.toks.some(t => t.start <= a && t.end >= b - 1)) continue;
+      if (!/[A-Za-zÀ-ú]{2}/.test(l.segs[k].str)) continue;
+      return l.segs[k].x;
+    }
+    return null;
   }
   function descStartX(l) { return l.date ? posX(l, Math.min(l.text.length - 1, l.date.end + 1)) : l.x; }
 

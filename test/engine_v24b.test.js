@@ -40,11 +40,11 @@ test('pdfLines: y clustering with tolerance, x order, word gaps merged, column g
 });
 
 test('analyzePdf: date header lines + two-line records (time, wallet), wallet moves, footer repeated on every page', () => {
-  const items = [it(1, 800, 40, 'Cartão Benefícios Exemplo'), it(1, 770, 40, 'Extrato atualizado em 04/10/2026 10:00'), it(1, 30, 200, 'Gerado em 04/10/2026'),
+  const items = [it(1, 800, 40, 'Cartão Benefícios Exemplo'), it(1, 770, 40, 'Extrato atualizado em 03/10/2026 09:15'), it(1, 30, 200, 'Gerado em 03/10/2026'),
     it(1, 700, 40, '3 outubro 2026', 14), it(1, 670, 90, 'Cantina Alfa', 11), right(1, 670, 550, '-R$ 50,00', 11), it(1, 656, 90, 'Compra no Refeição • 12:30'),
     it(1, 600, 90, 'Transferência entre Carteiras', 11), right(1, 600, 550, '+R$ 20,00', 11), it(1, 586, 90, 'Alimentação • 00:00'),
     it(1, 530, 90, 'Transferência entre Carteiras', 11), right(1, 530, 550, '-R$ 20,00', 11), it(1, 516, 90, 'Refeição • 00:00'),
-    it(2, 30, 200, 'Gerado em 04/10/2026'),
+    it(2, 30, 200, 'Gerado em 03/10/2026'),
     it(2, 780, 40, '28 setembro 2026', 14), it(2, 750, 90, 'Crédito de benefício', 11), right(2, 750, 550, '+R$ 500,00', 11), it(2, 736, 90, 'Refeição • 00:00'),
     it(2, 680, 90, 'Mercado Beta', 11), right(2, 680, 550, '-R$ 80,10', 11), it(2, 666, 90, 'Compra no Alimentação • 18:05')];
   const a = E.analyzePdf({ items, pages: 2, pageSizes: [{ w: 595, h: 842 }, { w: 595, h: 842 }] });

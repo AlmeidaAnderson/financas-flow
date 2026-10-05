@@ -70,11 +70,14 @@ for (const m of out.matchAll(/<script[^>]*\ssrc="([^"]+)"/g)) {
 for (const m of out.matchAll(/<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"/g)) {
   if (!/^https:\/\/fonts\.googleapis\.com\//.test(m[1])) throw new Error('stylesheet de origem não permitida: ' + m[1]);
 }
-// v2.4b: pdf.js is loaded by app.js only when a PDF is chosen — from cdnjs, pinned (never a moving "latest")
+// v2.4b: pdf.js is loaded by app.js only when a PDF is chosen — from cdnjs (fallback jsDelivr), pinned (never a moving "latest")
 const pdfUrls = [...out.matchAll(/https:\/\/[^'"`\s]*pdf\.js[^'"`\s]*/g)].map(m => m[0]);
 if (!pdfUrls.length) throw new Error('app.js sem a URL do pdf.js');
 for (const u of pdfUrls) if (!/^https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/pdf\.js\/(?:\d+\.\d+\.\d+\/|'?\s*\+)/.test(u) && !/^https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/pdf\.js\/$/.test(u)) throw new Error('pdf.js fora do cdnjs ou sem versão fixa: ' + u);
 if (!/const PDFJS_VER = '\d+\.\d+\.\d+';/.test(out)) throw new Error('versão do pdf.js não fixada em app.js');
+// fallback host: jsDelivr, the pinned npm package (same files as node_modules/pdfjs-dist/build/)
+if ([...out.matchAll(/https:\/\/cdn\.jsdelivr\.net\/npm\/pdfjs-dist(?!@')/g)].length) throw new Error('pdf.js do jsDelivr sem versão fixa');
+if (!/const PDFJS_CDN2 = 'https:\/\/cdn\.jsdelivr\.net\/npm\/pdfjs-dist@' \+ PDFJS_VER \+ '\/build\/';/.test(out)) throw new Error('fallback do pdf.js (jsDelivr) ausente ou fora do pacote fixado');
 const bytes = Buffer.byteLength(out);
 if (bytes > 16 * 1024 * 1024) throw new Error('maior que 16 MB');
 

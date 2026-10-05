@@ -1,6 +1,6 @@
 """End-to-end tests of v2.4b — PDF statements + foreign currencies — in headless Chromium.
 
-Usage: npm run build:artifact && python3 test/e2e/e2e_v24b.py [A] [S] [L] [N] [R]
+Usage: npm run build:artifact && python3 test/e2e/e2e_v24b.py [A] [F] [S] [L] [N] [R]
   A. Artifact build under artifact-like conditions: a CSP equal to the claude.ai allowlist (scripts only from cdnjs /
      jsdelivr / unpkg + the inline ones, no other network, no workers but blob:/self) and the fake window.claude. pdf.js
      3.11.174 is requested from its cdnjs URL; the sandbox cannot reach cdnjs, so the SAME pinned files (pdfjs-dist
@@ -8,6 +8,8 @@ Usage: npm run build:artifact && python3 test/e2e/e2e_v24b.py [A] [S] [L] [N] [R
      single PDF (fatura: chips, excluded regions, checksum, fx badge, "Compras internacionais", filter, card days),
      password (wrong → right), image-only PDF, batch of PDFs mixed with a CSV (benefit card, EUR account + rates,
      extrato), nothing but allow-listed hosts requested, no Worker constructed, no CSP violation.
+  F. CDN fallback: cdnjs unreachable → the same pinned files from jsDelivr (pdfjs-dist@3.11.174/build/); both
+     unreachable → a clear pt-BR message, and a new try works once the network is back.
   S. 390 dark / 1280 light / 1280 dark: detection, preview, batch and Transações screens (no horizontal page scroll).
   L. site/ in local mode: pdf.js from /vendor with a same-origin Web Worker.
   N. Netlify build (test harness with the real netlify.toml CSP + fake Identity): PDF import, no CSP violation.
@@ -35,6 +37,7 @@ FAKE_JS = open(os.path.join(ROOT, 'test', 'fake-claude.js'), encoding='utf-8').r
 FAKE_ID = open(os.path.join(HERE, 'fake_identity.mjs'), encoding='utf-8').read()
 PDFJS = {n: open(os.path.join(ROOT, 'node_modules', 'pdfjs-dist', 'build', n), 'rb').read() for n in ('pdf.min.js', 'pdf.worker.min.js')}
 CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/'
+CDN2 = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/'
 # the claude.ai Artifact allowlist as a CSP: inline page scripts + the allowed CDNs; nothing else on the network
 ART_CSP = ("default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net/npm/ https://unpkg.com; "
            "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; "
@@ -117,11 +120,28 @@ def cdn_route(route):
         route.fulfill(status=404, body='')
 
 
-def open_artifact(b, ns, scheme='light', w=390, h=844):
+def jsd_route(route):
+    """jsDelivr: the pinned pdfjs-dist build files (fallback host of pdf.js); anything else there is the xlsx stub"""
+    url = route.request.url
+    if url.startswith(CDN2) and url[len(CDN2):] in PDFJS:
+        route.fulfill(status=200, body=PDFJS[url[len(CDN2):]], content_type='application/javascript', headers={'access-control-allow-origin': '*'})
+    elif 'pdfjs-dist' in url:
+        route.fulfill(status=404, body='')
+    else:
+        route.fulfill(status=200, body='/* xlsx stub */', content_type='text/javascript', headers={'access-control-allow-origin': '*'})
+
+
+def down(route):
+    route.abort('internetdisconnected')
+
+
+def open_artifact(b, ns, scheme='light', w=390, h=844, cdnjs=True, jsdelivr=True):
     ctx = b.new_context(viewport={'width': w, 'height': h}, color_scheme=scheme, device_scale_factor=2)
     ctx.route(re.compile(r'https://fonts\.(googleapis|gstatic)\.com/.*'), lambda r: r.fulfill(status=200, body='', content_type='text/css'))
-    ctx.route(re.compile(r'https://cdn\.jsdelivr\.net/.*'), lambda r: r.fulfill(status=200, body='/* xlsx stub */', content_type='text/javascript', headers={'access-control-allow-origin': '*'}))
-    ctx.route(re.compile(r'https://cdnjs\.cloudflare\.com/.*'), cdn_route)
+    # pdf.js hosts: the pinned local files served at their CDN URLs, or the host made unreachable (network error)
+    ctx.route(re.compile(r'https://cdn\.jsdelivr\.net/npm/pdfjs-dist.*'), jsd_route if jsdelivr else down)
+    ctx.route(re.compile(r'https://cdn\.jsdelivr\.net/(?!npm/pdfjs-dist).*'), jsd_route)
+    ctx.route(re.compile(r'https://cdnjs\.cloudflare\.com/.*'), cdn_route if cdnjs else down)
 
     def page_with_csp(route):
         resp = route.fetch()
@@ -381,6 +401,43 @@ def scenario_artifact(b):
     ctx.close()
 
 
+def scenario_fallback(b):
+    section('F. pdf.js CDN fallback: cdnjs down → jsDelivr (pinned pdfjs-dist build); both down → clear message, retry works')
+    ns = 'v24bF' + RUN
+    seed_artifact(ns, base_meta())
+    tag = 'fb-cdnjs-down'
+    ctx, pg = open_artifact(b, ns, cdnjs=False)
+    start_import(pg, acc='cartao')
+    pg.set_input_files('#imp-file', os.path.join(FXD, 'fatura_roxa.pdf'))
+    wait_step(pg, 60000)
+    check(pg.is_visible('#pdf-detect') and '✓ total bate' in pg.inner_text('#pdf-detect'), f'{tag}: PDF read with pdf.js from jsDelivr')
+    pdf_reqs = [u for u in pg._reqs if 'pdf.min.js' in u or 'pdf.worker.min.js' in u]
+    check(CDN + 'pdf.min.js' in pdf_reqs and CDN2 + 'pdf.min.js' in pdf_reqs and CDN2 + 'pdf.worker.min.js' in pdf_reqs,
+          f'{tag}: tried cdnjs first, then the pinned jsDelivr files ({len(pdf_reqs)} requests)')
+    check(J(pg, '() => window.__workers') == 0 and not J(pg, '() => window.__csp'), f'{tag}: no Worker, no CSP violation')
+    check(not [e for e in pg._errs if 'fonts.gstatic' not in e and 'ERR_INTERNET_DISCONNECTED' not in e], f'{tag}: no console errors {pg._errs[:2]}')
+    ctx.close()
+    tag = 'fb-both-down'
+    ctx, pg = open_artifact(b, ns, cdnjs=False, jsdelivr=False)
+    start_import(pg, acc='cartao')
+    pg.set_input_files('#imp-file', os.path.join(FXD, 'fatura_roxa.pdf'))
+    wait_step(pg, 60000)
+    err = pg.inner_text('#scr-import .banner.err') if pg.locator('#scr-import .banner.err').count() else ''
+    check('leitor de PDF não carregou' in err and 'cdnjs' in err and 'jsDelivr' in err and 'CSV/XLSX' in err, f'{tag}: clear pt-BR message ({err[:110]})')
+    if err:
+        pg.locator('#scr-import .banner.err').scroll_into_view_if_needed()
+    shot(pg, 'art-390-light-pdf-cdn-down')
+    no_hscroll(pg, tag)
+    # the network comes back: the same file loads on the next try (the failed load is not cached)
+    ctx.unroute(re.compile(r'https://cdnjs\.cloudflare\.com/.*'))
+    ctx.route(re.compile(r'https://cdnjs\.cloudflare\.com/.*'), cdn_route)
+    start_import(pg, acc='cartao')
+    pg.set_input_files('#imp-file', os.path.join(FXD, 'fatura_roxa.pdf'))
+    wait_step(pg, 60000)
+    check(pg.is_visible('#pdf-detect'), f'{tag}: after the network is back, a new try reads the PDF')
+    ctx.close()
+
+
 def scenario_screens(b):
     for (w, scheme) in ((390, 'dark'), (1280, 'light'), (1280, 'dark')):
         tag = f'art-{w}-{scheme}'
@@ -389,6 +446,8 @@ def scenario_screens(b):
         seed_artifact(ns, base_meta())
         ctx, pg = open_artifact(b, ns, scheme, w, 900)
         flow_single(pg, tag)
+        if w == 390:
+            flow_password(pg, tag)
         flow_batch(pg, tag)
         net_check(pg, tag)
         ctx.close()
@@ -521,6 +580,34 @@ def scenario_real(b):
         check(len(ben) == 33 and sum(t['amount'] for t in tr) == 0, f'{tag}: benefit imported, wallet moves net zero')
         goto_tab(pg, 'tx')
         shot(pg, f'{tag}-tx')
+        cid = acc['id']
+        # the same fatura again → every row is a duplicate, nothing new
+        start_import(pg, acc=cid)
+        pg.set_input_files('#imp-file', mp)
+        wait_step(pg)
+        if pg.locator('[data-act="imp-step"][data-s="3"]').count():
+            pg.click('[data-act="imp-step"][data-s="3"]'); pg.wait_for_selector('[data-act="imp-step"][data-s="4"]')
+        dd = J(pg, '() => ({ fresh: __ff.state().imp.dedup.fresh.length, dup: __ff.state().imp.dedup.duplicates.length })')
+        check(dd == {'fresh': 0, 'dup': 11}, f'{tag}: re-import of the fatura → all duplicates ({dd})')
+        # a batch: the real fatura (already imported) + a CSV, ONE shared account for both
+        J(pg, '() => { __ff.state().imp = null; }')
+        goto_tab(pg, 'painel'); goto_tab(pg, 'import')
+        pg.set_input_files('#imp-file', [mp, CSV])
+        pg.wait_for_selector('#bf-list .bf >> nth=1', timeout=40000)
+        wait(pg, '() => !document.querySelector("#bf-busy")', 30000)
+        keys = J(pg, '() => [...document.querySelectorAll("#bf-list .bf")].map(e => [e.dataset.key, e.querySelector(".nm").textContent])')
+        kc = next(k for k, n in keys if n.endswith('.csv'))
+        kp = next(k for k, n in keys if not n.endswith('.csv'))
+        pg.select_option('#bf-shared', cid); pg.wait_for_timeout(200)
+        check(pg.locator(f'.bf[data-key="{kp}"] [data-already]').count() == 1, f'{tag}: batch row of the fatura says "Já importado: nada novo"')
+        pg.click(f'.bf[data-key="{kc}"] [data-act="bf-config"]')
+        pg.wait_for_selector('[data-act="imp-step"][data-s="3"]'); pg.click('[data-act="imp-step"][data-s="3"]')
+        pg.fill('#imp-layout', 'Fatura CSV'); pg.click('#imp-batch-save'); pg.wait_for_selector('#bf-list')
+        pg.click('#bf-import'); pg.wait_for_selector('#batch-done', timeout=15000)
+        recs = [r for r in J(pg, '() => Object.values(__ff.D().imports)') if r['fileName'] == os.path.basename(CSV)]
+        n_csv = J(pg, '(id) => __ff.live().filter(t => t.importId === id && t.accountId === %s).length' % json.dumps(cid), recs[0]['id']) if recs else 0
+        n_card = J(pg, '(c) => __ff.live().filter(t => t.accountId === c).length', cid)
+        check(len(recs) == 1 and recs[0]['accountId'] == cid and n_csv == 3 and n_card == 14, f'{tag}: batch CSV + PDF into the shared card account: 3 new CSV rows, fatura only duplicates ({n_csv}, {n_card})')
         check(not [e for e in pg._errs if 'fonts' not in e], f'{tag}: no console errors')
         ctx.close()
 
@@ -528,12 +615,14 @@ def scenario_real(b):
 def main():
     srv = artifact_server.start(PORT)
     lsrv = site_server.start(LPORT)
-    only = sys.argv[1:] or ['A', 'S', 'L', 'N', 'R']
+    only = sys.argv[1:] or ['A', 'F', 'S', 'L', 'N', 'R']
     with sync_playwright() as p:
         b = p.chromium.launch()
         try:
             if 'A' in only:
                 scenario_artifact(b)
+            if 'F' in only:
+                scenario_fallback(b)
             if 'S' in only:
                 scenario_screens(b)
             if 'L' in only:

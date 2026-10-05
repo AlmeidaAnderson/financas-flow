@@ -132,5 +132,9 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
   pdfjs-dist, and the two real PDFs when present at `FF_REAL_PDF_DIR` — only counts asserted) and
   `python3 test/e2e/e2e_v24b.py` (Artifact build under a CSP equal to the claude.ai allowlist — the sandbox cannot reach
   cdnjs, so the same pinned pdf.js files are served at the cdnjs URL by route interception —, 390/1280 light/dark, local
-  mode with the vendored worker, Netlify harness with the real CSP, real samples when present). Fixtures:
-  `python3 test/fixtures/pdf/make_pdfs.py` (reportlab; all data made up). Screenshots: `screens/v24b/`.
+  mode with the vendored worker, Netlify harness with the real CSP, real samples when present — incl. re-import → all
+  duplicates and a batch CSV + PDF into one shared account; scenario F = CDN fallback: cdnjs unreachable → the pinned
+  jsDelivr files, both unreachable → pt-BR message, retry works). Fixtures: `python3 test/fixtures/pdf/make_pdfs.py`
+  (reportlab; all data made up). Review fixtures from an independent generator (`make_pdfs_review.py`: "05 SET 2026"
+  dates, US$ + EUR in an international section with "Dólar de conversão", amount before a "05.09.2026" date with C/D,
+  descriptions wrapped to 2 lines, a two-column page) → `test/engine_v24b_review.test.js`. Screenshots: `screens/v24b/`.

@@ -166,7 +166,18 @@ The "local" adapter (localStorage) is used for dev, tests and when not signed in
   - Artifact build: `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js` and `pdf.worker.min.js`, loaded
     lazily as `<script>`s (the build checks the URL is cdnjs + pinned). Loading the worker file as a script defines
     `globalThis.pdfjsWorker`, so pdf.js uses its in-thread "fake worker": no Worker, no cross-origin fetch, no eval
-    (verified under a CSP equal to the allowlist in e2e_v24b).
+    (verified under a CSP equal to the allowlist in e2e_v24b). Fallback per file (error or 60 s timeout, or the file
+    loaded but its global is missing): `https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js` /
+    `pdf.worker.min.js` (the same files as the pinned `node_modules/pdfjs-dist/build/`; the build checks this URL too).
+    Both hosts failing → error `pdf_load_cdn` with a pt-BR message (connection / blocked sites / use CSV-XLSX meanwhile);
+    the failed load is not cached, so a new try works when the network is back.
+- **Layout review fixes** (generic, no per-bank rules): pages printed in two side-by-side columns of records are cut at
+  the gutter when ≥ 3 lines split at the same x (`pdfColumns`; two date columns of ONE record never split — the left
+  part has no amount); a date right after a leading amount / document number (`1.234,56 D  05.09.2026  HISTÓRICO`);
+  a description wrapped to the next line (plain text starting at the description's x, no amount/time/parcela/wallet)
+  joins the description instead of becoming a detail; a "Valor total" label alone above its value; parcelas printed
+  with their POSTING date (shifting would push most of them past the due date / cycle) → `pdf.installmentPosted`, the
+  table gets the purchase date so the installment rule books them in this fatura.
 - **Layout reconstruction** (pure): `pdfLines(items)` (y clusters with tolerance, x order, word gaps merged, column gaps
   kept as segments) → `analyzePdf({items,pages,pageSizes})`: repeated top/bottom lines on ≥ 2 pages (digits masked) and
   "Página x de y" dropped; money tokens (`R$`, `-R$`, `+R$`, `D/C`, `(…)`, trailing `-`, `US$/USD/€/EUR/£/ISO`, rates after
