@@ -219,3 +219,80 @@ The "local" adapter (localStorage) is used for dev, tests and when not signed in
   stored); image-only message; detection chips + "Ignorado: …" (collapsible, with samples) in steps 2/3 and batch rows;
   checksum pre-filled with the statement total; rate inputs for foreign-only files; currency badge on rows; filter
   "Moeda estrangeira"; Ajustes → "Cotações".
+
+## v2.5 additions — transfers between your own accounts and payments
+Problem: Pix/TED/Wise moves between the user's own accounts, currency conversions and fatura payments counted as income
+or spending. Everything below is generic (formats + columns + names), never per-bank.
+- **settings** (synced, field-wise merge): `ownerNames: [name]` (your name as statements print it — set only by the user:
+  "Quem é você nos extratos?" card / Transferências sheet), `ownerNamesAsked`, `ownerNamesDismissed: [candidateKey]`,
+  `transferRejected: ["p:<idA>|<idB>" pair keys, "o:<id>" row keys]` ("Não é transferência", undo → never proposed again),
+  `transferReview: { at, version, counts, rows: {reason: n}, changes: [{id, reason, prev}], undone? }` (the one migration
+  review, "Desfazer revisão"); `schemaVersion: 3`.
+- **Transactions** may carry: `transferAccountId` (other account id or `"external"` = "Conta não cadastrada"),
+  `transferSubtype: "conversion"`, `transferSource: auto|user`, `transferBank` (bank key of an outside account),
+  `cardAccountId` (card a payment pays), `kindSource: "manual"` (user changed the Tipo — detection never flips it), and from
+  import columns `counterparty` (Payer/Payee Name, Favorecido, Nome…), `txType` (a bank's "Transação"/"Transaction Details
+  Type"), `exchange: {from, to, toAmount (cents), rate}` (Exchange From/To columns). Import records may carry `holderName`.
+- **Import**: new column roles `payer`, `payee`, `counterparty`, `txType`, `fxFrom`, `fxTo`, `fxToAmount`, `holder` — taken only
+  by header from columns nothing else used (amount/description/date never change; ids unchanged). `analysis.holder` from a
+  "Cliente:/Titular:/Olá, NAME" preamble; `applyProfile(...).holder` from a holder column; `importHolder(analysis, result)`;
+  `adoptInfoColumns(profile, analysis)` lets a layout saved earlier adopt them (single + batch import).
+- **Engine**: `isOwnName(name, ownerNames)` (accents/case off, particles de/da/do/dos/das/e dropped, truncated tokens = prefix
+  ≥ 4, FIRST name + ≥ 1 other token; relatives with another first name, companies/CNPJs never); `counterparty(row|text)`
+  (≥ 12 description formats + `tx.counterparty`/`tx.txType` columns → `{name, direction, bankKey, institution, company,
+  source}`); `conversionOf(tx)`; `detectTransfers(txs, {accounts, ownerNames, settings})` → `{transactions, changed,
+  changes:[{id, reason, prev}], suggestions, counts, pairs}` — reasons: `pair` (one-to-one across accounts: same amount or
+  fee ≤ R$ 5/1 %, 0–4 days (business days), foreign 3 % / same fx currency 1 %; strong when a side is your name, names the
+  other account's bank, or — without names — the same person on both sides with the exact amount in 0–2 days), `own_name`
+  (no pair → `external`), `conversion`, `card_payment` (+ "Débito por dívida/pagamento mínimo da fatura"; linked to the card
+  by bank/linked row/nearest due date), `investment` (reservado/retirado/caixinha/aplicação/resgate, not rendimentos);
+  medium/ambiguous pairs and "Pix to an institution where you have an account" → suggestions. Manual rows (catSource or
+  kindSource manual) are never flipped. `undoTransferChanges`, `ownerNameCandidates` (variants grouped; holder/linked pairs
+  pre-tick; never applied without "Confirmar"), `transferOverview` (pairs, flows, outside accounts by bank, conversions,
+  total), `learnTransferRule` (Lembrar: counterparty → `set:{kind:'transfer'}` rule).
+- `ingest` runs `detectTransfers` after classify (a new extrato completes a pair left open). `migrateData` (schema < 3) applies
+  the high-confidence changes once (own name only when names exist) and stores `transferReview`.
+- **dataHealth**: `m:nopair:<id>` "Transferência sem entrada correspondente" (an outflow to an own account that is in the app
+  and whose rows cover the days after it, with no linked entry); `f` names the outside banks; `importKind` treats mostly
+  money-in / salary rows / an "Extrato" file name as an extrato → `b:extrato-in-card` flags it inside a card account.
+- **App**: editor Tipo = Gasto / Entrada / Transferência entre minhas contas (account picker incl. "Conta não cadastrada",
+  optional counterpart row, Lembrar) / Pagamento de fatura (card picker) / Investimento; triage "É transferência minha" →
+  account buttons (+ likely pair) → Desfazer; Painel chip "Entre suas contas: R$ X" + first-run card; "Transferências"
+  sheet (also Ajustes); Sankey "Por conta" lists flows between accounts under the chart. Totals (summarize, carryover,
+  categorySeries, Sankey) already exclude `transfer`/`card_payment`.
+
+## v2.5 corpus review — a real multi-bank folder (generic rules only)
+- **Files**: `fileKindOf(name, bytes)` (pdf | xlsx | zip | text; a ZIP holding a workbook is a spreadsheet, any other ZIP an
+  archive of statements, whatever the name says) and `unzipEntries(bytes, { inflate })` (central directory, stored/deflated,
+  folders flattened, hidden files/__MACOSX/non-statements left out; codes `zip_invalid|zip_encrypted|zip_method`). The app
+  expands a ZIP into the batch list (`DecompressionStream('deflate-raw')`); file inputs accept `.zip`.
+- **applyProfile**: rows equal to the header row or to a line above it (a statement printed page by page repeats both) are
+  left out, never errors; `result.skipped: [{rowIndex, reason}]` ("saldo ou total", "cabeçalho repetido", "topo do arquivo
+  repetido"); `result.installmentDate` — with no `profile.installmentDate`, parcelas n>1 printed among the bill's own dates
+  (≥ 60 %, shifting would push them past the last row) are POSTING dates → booked as printed (`as_is`), else shifted.
+  A header-only file → `analysis.empty`, 0 rows, 0 errors (batch: nothing to configure). A file rate is a BRL rate only when
+  the row's Exchange From/To has BRL on one side (BRL→X = 1/rate); a USD→CNY card rate falls back to `settings.fxRates`.
+  Generic "Descrição/Description/Histórico" headers beat narrower ones (Merchant, Payee) for the description.
+- **dedupe**: fuzzy matches (±2 days) never join two rows whose running balances (or times) differ.
+- **importKind**: file names split on `_ . -`; the bank's transaction type (`txType`) counts as wording. The batch passes the
+  file name.
+- **classify**: no category from the description → the bank's type (`txType`: "Pagamento de salário/adiantamento/rescisão")
+  as a category hint (never a transfer/card payment); money in typed as a card purchase (CARD/COMPRA) = refund (expense).
+- **Owner names**: `isOwnName` — every other name on the statement must be one of yours (all your variants with that first
+  name pooled): a statement may drop or cut names, never add one (a sibling "Fulana Tal Souza" ≠ "Fulana Beltrana de Tal").
+- **detectTransfers**: Exchange columns on a card purchase abroad are not a conversion; the other leg of a conversion is
+  itself a conversion holding the OTHER side's amount (money out ↔ "to", money in ↔ "from"); your name at a bank where you
+  have an account in the app (no pair) → that account (`transferAccountId`), else "external"; a Pix/boleto to a card's
+  issuer of exactly an imported fatura's total (≤ 40 days after its last purchase) → that card's payment; rows patched and
+  patched back are not changes (idempotent). `linkCardPayments`: a Pix to a person is never a bill payment; a row linked
+  on an earlier import lets go when a better (hinted) match arrives — same result in any import order.
+- **dataHealth**: `filePeriod` reads month names ("01ABR2026_30ABR2026"); running balances compared in the statement's own
+  currency (fx source file/manual); a month inside the period a file says it covers is never a gap; check c counts every
+  payment of one cycle together (bills paid in parts), uses the printed due date of PDF faturas, and names the payment's own
+  card in "Pagamento de fatura sem a fatura"; no salary expected after a severance payment. `inferCardDays`: with ≥ 2 pairs
+  of consecutive bills, the closing day allowed by every window (after one bill's last purchase, on/before the next one's
+  first) wins over "the first purchase day" (sparse bills of one subscription).
+- **App**: no import record when every row was a duplicate (no orphan imports); batch account suggestion and the shared
+  account respect the account currency (a USD statement goes to the USD account, with a note).
+- **Corpus harness** (runtime only, nothing stored): `test/corpus.test.js` + `test/corpus/{pipeline,corpus,importer,plan}.js`
+  + `test/corpus/reference.py` (independent reader) + `test/e2e/e2e_corpus.py`, all keyed on `FF_CORPUS_DIR`.

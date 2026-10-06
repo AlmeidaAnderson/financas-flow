@@ -138,3 +138,28 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
   (reportlab; all data made up). Review fixtures from an independent generator (`make_pdfs_review.py`: "05 SET 2026"
   dates, US$ + EUR in an international section with "Dólar de conversão", amount before a "05.09.2026" date with C/D,
   descriptions wrapped to 2 lines, a two-column page) → `test/engine_v24b_review.test.js`. Screenshots: `screens/v24b/`.
+
+## v2.5 — transferências entre suas contas (10 min)
+- [ ] Painel → "Quem é você nos extratos?" → confira os nomes marcados (só você, nunca parentes) → Confirmar. Pix/Wise em
+      seu nome somem de Entradas/Saídas; "Desfazer" no aviso volta tudo.
+- [ ] Painel → "Entre suas contas: R$ X" → Transferências: pares entre contas, contas fora do app (por banco), conversões de
+      moeda, "Para confirmar" (Confirmar / Não é transferência), "Revisão de transferências" → "Desfazer revisão".
+- [ ] Transações → um lançamento → Tipo "Transferência entre minhas contas" → conta (ou "Conta não cadastrada") → escolha o
+      outro lado → Salvar → os dois ficam ligados. Tipo "Pagamento de fatura" → escolha o cartão.
+- [ ] Triagem → "É transferência minha" → toque na conta → Desfazer.
+- [ ] Saúde dos dados: "Transferência sem entrada correspondente" e "Extrato bancário dentro de um cartão".
+- Automated: `npm test` (test/engine_v25.test.js, synthetic; test/engine_v25_real.test.js on the real snapshot when present —
+  prints only counts per reason and the monthly income/expense change %) and `python3 test/e2e/e2e_v25.py` (Artifact + fake
+  db 390 light full flow + second synced page at 1280 dark; 390 dark / 1280 light / 1280 dark screens; local mode; real
+  snapshot read-only, counts only, no screenshots). Screenshots: `screens/v25/`.
+
+## v2.5 — revisão com a pasta de extratos real (5 min)
+- [ ] Importar → escolha o ZIP baixado do banco (ou vários arquivos de uma vez): cada extrato de dentro vira uma linha da lista.
+- [ ] Uma conta por moeda na carteira internacional (ex.: "Wise USD", "Wise CNY"): o extrato em USD vai sozinho para a conta em USD.
+- [ ] Reimportar a pasta inteira → "Já importado: nada novo" em todos.
+- [ ] Contas e importações → cartão → "Sugerir pelos dados": o fechamento sugerido bate com a fatura.
+- Automated (runtime only, nothing about the files is stored or printed except counts): `FF_CORPUS_DIR=<pasta> node --test
+  test/corpus.test.js` (every file vs the independent reader `test/corpus/reference.py`; import order; re-import; copies;
+  transfers; monthly totals; data health; card days) and `npm run build:artifact && FF_CORPUS_DIR=<pasta> python3
+  test/e2e/e2e_corpus.py` (one batch per institution in the Artifact build with the fake db, then the whole folder again).
+  Synthetic regressions of each pattern: `test/engine_v25_corpus.test.js`.

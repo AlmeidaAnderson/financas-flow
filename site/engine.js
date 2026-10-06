@@ -729,7 +729,7 @@
     '/\\bRESGATE\\b|\\bRESG\\b/|investimentos.aplicacoes|investment', '/\\bLCI\\b|\\bLCA\\b|\\bRDB\\b/|investimentos.aplicacoes|investment', 'POUPANCA|investimentos.aplicacoes|investment',
     'CORRETORA|investimentos.aplicacoes|investment', 'XP INVESTIMENTOS|investimentos.aplicacoes|investment', 'NUINVEST|investimentos.aplicacoes|investment', 'BTG PACTUAL|investimentos.aplicacoes|investment',
     // renda (only matches positive amounts)
-    'SALARIO|renda.salario|income', 'PAYROLL|renda.salario|income', 'CRED SALARIO|renda.salario|income', 'PROVENTOS|renda.salario|income', 'FOLHA DE PAGAMENTO|renda.salario|income', 'FOLHA PAGAMENTO|renda.salario|income', 'REMUNERACAO|renda.salario|income',
+    'SALARIO|renda.salario|income', 'PAYROLL|renda.salario|income', 'CRED SALARIO|renda.salario|income', 'PROVENTOS|renda.salario|income', 'FOLHA DE PAGAMENTO|renda.salario|income', 'FOLHA PAGAMENTO|renda.salario|income', 'REMUNERACAO|renda.salario|income', 'PAGAMENTO DE ADIANTAMENTO|renda.salario|income', 'ADIANTAMENTO SALARIAL|renda.salario|income', 'PAGAMENTO DE RESCISAO|renda.salario|income', 'VERBAS RESCISORIAS|renda.salario|income',
     '/\\b13O? ?SALARIO|DECIMO TERCEIRO/|renda.13|income', '/\\bFERIAS\\b/|renda.ferias|income', '/\\bPLR\\b|PARTICIPACAO NOS LUCROS|\\bBONUS\\b/|renda.plr|income',
     '/RENDIMENTOS?\\b|REND PAGO|JUROS SOBRE CAPITAL|DIVIDENDO/|renda.rendimentos|income', 'REEMBOLSO|renda.reembolsos|income', 'CASHBACK|renda.reembolsos|income',
     '/\\b(ALELO|SODEXO|PLUXEE|VR BENEFICIOS|TICKET SERVICOS|FLASH BENEFICIOS|CAJU BENEFICIOS)\\b/|renda.beneficios|income',
@@ -842,11 +842,11 @@
   // ---------------------------------------------------------------------------
   // Kind detection & classification
   // ---------------------------------------------------------------------------
-  const CARD_PAYMENT_RE = /\b(?:PAGAMENTO|PAGTO|PGTO|PAG)\.?\s+(?:DE\s+|DA\s+)?FATURA\b|\bFATURA\s+(?:DO\s+|DE\s+)?CART(?:AO)?\b|\bPAGAMENTO\s+(?:DE\s+|DO\s+)?CARTAO(?:\s+DE\s+CREDITO)?\b|\bPAG(?:TO)?\s+CARTAO\s+CRED|\bDEB(?:ITO)?\s+(?:AUT(?:OMATICO)?\.?\s+)?FATURA\b|\bPARA\s+PAGAR\s+(?:A\s+|SUA\s+)?FATURA\b/;
+  const CARD_PAYMENT_RE = /\b(?:PAGAMENTO|PAGTO|PGTO|PAG)\.?\s+(?:DE\s+|DA\s+)?FATURA\b|\bFATURA\s+(?:DO\s+|DE\s+)?CART(?:AO)?\b|\bPAGAMENTO\s+(?:DE\s+|DO\s+)?CARTAO(?:\s+DE\s+CREDITO)?\b|\bPAG(?:TO)?\s+CARTAO\s+CRED|\bDEB(?:ITO)?\s+(?:AUT(?:OMATICO)?\.?\s+)?FATURA\b|\bPARA\s+PAGAR\s+(?:A\s+|SUA\s+)?FATURA\b|\bPAGAMENTO\s+MINIMO\s+(?:DA\s+)?FATURA\b|\bDEBITO\s+POR\s+DIVIDA\b/;
   const CARD_SIDE_PAYMENT_RE = /\bPAGAMENTO\s+(?:RECEBIDO|EFETUADO|REALIZADO)\b|^PAGAMENTO\b|\bPAGTO\s+(?:RECEBIDO|EFETUADO)|\bPAGAMENTO\s+(?:EM\s+)?(?:DEBITO|CONTA)\b|\bPAGAMENTO\s+ON\s*-?\s*LINE\b|\bPGTO\s+(?:RECEBIDO|EFETUADO)|\bPAYMENT\b/;
   const TRANSFER_RE = /\bTRANSF(?:ERENCIA)?\.?\s+(?:ENTRE\s+CONTAS|PROPRIA|P\/\s*PROPRIA|MESMA\s+TITULARIDADE|MESMO\s+TITULAR)|\bENTRE\s+CONTAS\b|\bMESMA\s+TITULARIDADE\b|\bMESMO\s+TITULAR\b|\bENTRE\s+CARTEIRAS\b|\bTRANSF(?:ERENCIA)?\.?\s+(?:DE\s+|PARA\s+(?:A\s+)?)?CARTEIRA\b/;
   const REND_RE = /\bRENDIMENTOS?\b|\bREND\.?\s+PAGO|\bJUROS\s+SOBRE\s+CAPITAL|\bDIVIDENDOS?\b/;
-  const INVEST_RE = /\b(?:APLICACAO|APLIC|RESGATE|RESG|CDB|LCI|LCA|RDB|TESOURO|POUPANCA|COMPRA\s+DE\s+TITULO|CORRETORA)\b|\bINVESTIMENTOS?\b/;
+  const INVEST_RE = /\b(?:APLICACAO|APLIC|RESGATE|RESG|CDB|LCI|LCA|RDB|TESOURO|POUPANCA|COMPRA\s+DE\s+TITULO|CORRETORA|CAIXINHAS?|COFRINHOS?|PORQUINHOS?)\b|\bINVESTIMENTOS?\b|\bDINHEIRO\s+(?:RESERVADO|RETIRADO|GUARDADO|RESGATADO)\b/;
   const REFUND_ANY_RE = /\bESTORNO|\bDEVOLUCAO|\bCREDITO\s+DE\s+COMPRA|\bCHARGEBACK|\bCANCELAMENTO\s+DE\s+COMPRA/;
   const INCOME_RE = /\b(?:SALARIO|PROVENTOS?|FOLHA\s+(?:DE\s+)?PAGAMENTO|REMUNERACAO|PIX\s+RECEBIDO|TED\s+RECEBIDA|DOC\s+RECEBIDO|TRANSF(?:ERENCIA)?\s+RECEBIDA|RECEBIMENTO|DECIMO\s+TERCEIRO|FERIAS|PLR|BONUS|REEMBOLSO|CASHBACK)\b/;
 
@@ -951,6 +951,15 @@
         }
         if (e.kind === 'card_payment' || e.kind === 'transfer') kind = ruleKind || e.kind;
       }
+      // the bank's own transaction type ("Pagamento de salário", "Rendimento") when the description is only a name;
+      // only a category hint — a type never makes a row a transfer or a card payment here
+      if (!categoryId && tx.txType && !ruleKind) {
+        const et = lookupDictionary(dict, norm(tx.txType), tx.txType, tx.amount);
+        if (et && et.categoryId && et.kind !== 'transfer' && et.kind !== 'card_payment') {
+          const ck = kindForCategory(et.categoryId, catIdx);
+          if (!ck || (ck === 'income') === (tx.amount > 0)) { categoryId = et.categoryId; catSource = 'dictionary'; if (ck === 'income') kind = 'income'; }
+        }
+      }
     }
     // v2.4b: a benefit card's credit is the benefit; a purchase in a wallet ("Refeição", "Alimentação") hints the category —
     // below rules, learned rules and the dictionary
@@ -959,6 +968,9 @@
       const h = walletCategory(tx.tags);
       if (h && catIdx[h]) { categoryId = h; catSource = 'wallet'; }
     }
+    // money back on a row the bank itself types as a card purchase ("CARD", "Compra no cartão"): a refund of spending,
+    // never income
+    if (!ruleKind && kind === 'income' && (tx.amount || 0) > 0 && tx.txType && /\bCARD\b|\bCARTAO\b|\bCOMPRA\b|\bPURCHASE\b/.test(norm(tx.txType)) && !(categoryId && kindForCategory(categoryId, catIdx) === 'income')) kind = 'expense';
     // positive amount on an expense category with only sign-based kind => refund, i.e. a negative expense
     if (!ruleKind && categoryId && kind === 'income' && !dk.explicit) {
       const ci = catIdx[categoryId];
@@ -1196,6 +1208,13 @@
       const W = rows.reduce((a, r) => Math.max(a, r.length), 0);
       base.dataStart = 0; base.dataEnd = rows.length - 1;
       base.columns = Array.from({ length: W }, (_, j) => ({ index: j, header: '', role: 'ignore', confidence: 0, samples: rows.slice(0, 5).map(r => r[j] || '').filter(Boolean) }));
+      // only a header row (a statement of a period without movements): known, empty — never an error per row
+      const hi = rows.findIndex(r => r.filter(c => c && headerHint(c) && headerHint(c) !== 'ignore').length >= 2 && r.some(c => headerHint(c) === 'date'));
+      if (hi >= 0) {
+        base.headerRowIndex = hi; base.dataStart = hi + 1; base.empty = true;
+        base.columns.forEach(c => { c.header = rows[hi][c.index] || ''; });
+        warnings[warnings.length - 1] = 'O arquivo só tem o cabeçalho: nenhum lançamento no período.';
+      }
       base.fingerprint = 'fp_' + hashStr('EMPTY|' + W + '|' + (delimiter || ''));
       return base;
     }
@@ -1385,7 +1404,8 @@
       const textF = 1 - s.dateF - s.numF;
       if (textF < 0.3) return;
       let sc = textF * s.fill * (0.4 + 0.6 * Math.min(1, s.avgLen / 12)) * (0.4 + 0.6 * s.distinct) * (1 - 0.9 * s.idF) * (0.3 + 0.7 * s.letters);
-      if (s.hint === 'description') sc += 0.6;
+      // a generic "Descrição/Histórico/Description" header beats a narrower one (Merchant, Payee, Nome) when both exist
+      if (s.hint === 'description') sc += /DESCRI|HISTORICO|LANCAMENTO|TITLE|TITULO|MEMO|NARRATIVA/.test(norm(s.header)) ? 0.8 : 0.6;
       if (s.hint === 'ignore') sc *= 0.3;
       if (sc > descBest) { descSecond = descBest; descBest = sc; descCol = s.j; } else if (sc > descSecond) descSecond = sc;
     });
@@ -1396,6 +1416,19 @@
       if (s.hint === 'description') c = Math.max(c, 0.9);
       conf[descCol] = round2(clamp01(c));
     } else warnings.push('Coluna de descrição não identificada.');
+    // v2.5: information columns kept on each row — who paid / received (Payer/Payee Name, Favorecido, Nome), the bank's
+    // transaction type ("Transação: Pix enviado", "Transaction Details Type"), currency exchange (Exchange From/To), the
+    // account holder. Only columns nothing else took; the amount/description roles above never change.
+    const infoUsed = new Set();
+    stats.forEach(s => {
+      if (roles[s.j] !== 'ignore' || !s.ne.length || s.j === descCol) return;
+      const r = infoRoleHint(s.header);
+      if (!r || infoUsed.has(r)) return;
+      if (r === 'fxToAmount' && s.numF < 0.5) return;
+      if ((r === 'fxFrom' || r === 'fxTo') && !s.ne.every(v => /^[A-Z]{3}$/i.test(String(v).trim()))) return;
+      roles[s.j] = r; conf[s.j] = 0.85; infoUsed.add(r);
+    });
+    const holder = holderFromPreamble(rows.slice(0, headerRowIndex != null ? headerRowIndex : Math.min(dataStart, 15)));
 
     // number format
     const numCols = roles.map((r, j) => (['amount', 'debit', 'credit', 'balance'].includes(r) ? j : -1)).filter(j => j >= 0);
@@ -1475,7 +1508,58 @@
       numberFormat: nf.format, numberFormatConfidence: nf.confidence,
       dateFormat: df.format, dateFormatConfidence: df.confidence,
       signConvention, signConfidence, fingerprint, overallConfidence: round2(clamp01(overall)), width: W, currency
-    });
+    }, holder ? { holder } : {});
+  }
+  /** v2.5: header → an information role (never amount/description) */
+  const INFO_HDR = [
+    ['holder', /CARD HOLDER|CARDHOLDER|\bTITULAR\b|NOME DO PORTADOR|^PORTADOR$/],
+    ['fxToAmount', /EXCHANGE TO AMOUNT|VALOR CONVERTIDO|CONVERTED AMOUNT/],
+    ['fxFrom', /^EXCHANGE FROM$|^MOEDA DE ORIGEM$|^FROM CURRENCY$|^SOURCE CURRENCY$/],
+    ['fxTo', /^EXCHANGE TO$|^MOEDA DE DESTINO$|^TO CURRENCY$|^TARGET CURRENCY$/],
+    ['payer', /\bPAYER\b(?!.*\b(?:ACCOUNT|NUMBER|ID|DOC)\b)|\bPAGADOR\b|\bREMETENTE\b|NOME DO ORIGEM|^ORIGEM DO PIX$/],
+    ['payee', /\bPAYEE\b(?!.*\b(?:ACCOUNT|NUMBER|ID|DOC)\b)|\bFAVORECIDO\b|\bBENEFICIARIO\b|\bDESTINATARIO\b|^RECEBEDOR$/],
+    ['counterparty', /CONTRAPARTE|COUNTERPARTY|^NOME$|^NOME DA CONTRAPARTE$|^CLIENTE\/FORNECEDOR$/],
+    ['txType', /^TRANSACAO$|^TIPO DE TRANSACAO$|^TIPO DA TRANSACAO$|^TIPO DE LANCAMENTO$|^TIPO DE OPERACAO$|^OPERACAO$|TRANSACTION DETAILS TYPE|^TRANSACTION TYPE$|^MOVIMENTACAO$|^TIPO DE MOVIMENTACAO$/]
+  ];
+  const INFO_ROLES = INFO_HDR.map(x => x[0]);
+  function infoRoleHint(h) {
+    const n = norm(h).replace(/\s+/g, ' ').trim();
+    if (!n) return null;
+    for (const [r, re] of INFO_HDR) if (re.test(n)) return r;
+    return null;
+  }
+  /** the account holder printed above the table ("Cliente: NAME", "Titular | NAME", "Olá, NAME") -> name | null */
+  function holderFromPreamble(rows) {
+    for (const r of rows || []) {
+      const cells = (r || []).map(c => cellStr(c).trim()).filter(Boolean);
+      for (let k = 0; k < cells.length; k++) {
+        const n = norm(cells[k]);
+        let m = /^(?:CLIENTE|TITULAR|NOME DO CLIENTE|NOME DO TITULAR|CORRENTISTA|ACCOUNT HOLDER|NOME)\s*:?\s*(.*)$/.exec(n);
+        let val = null;
+        if (m) val = m[1] ? cells[k].slice(cells[k].length - m[1].length) : (cells[k + 1] || null);
+        else if ((m = /^OLA\s*,\s*(.+?)[!.]?$/.exec(n))) val = cells[k].slice(cells[k].length - m[1].length - (/[!.]$/.test(cells[k]) ? 1 : 0)).replace(/[!.]$/, '');
+        if (val && /^[\p{L} .'-]{4,80}$/u.test(val) && !/\d/.test(val) && nameTokens(val).length >= 1 && !COMPANY_RE.test(norm(val))) return val.trim();
+      }
+    }
+    return null;
+  }
+  /** v2.5: a layout saved before a version knew some information columns adopts what the analysis finds now
+   *  -> { profile, added: [role] } (columns already used by the profile are never taken) */
+  function adoptInfoColumns(profile, analysis) {
+    if (!profile || !analysis) return { profile, added: [] };
+    const cols = Object.assign({}, profile.columns || {});
+    const used = new Set(Object.values(cols));
+    const added = [];
+    for (const role of ['installment', 'time'].concat(INFO_ROLES)) {
+      const c = (analysis.columns || []).find(x => x.role === role);
+      if (c && cols[role] == null && !used.has(c.index)) { cols[role] = c.index; used.add(c.index); added.push(role); }
+    }
+    return { profile: added.length ? Object.assign({}, profile, { columns: cols }) : profile, added };
+  }
+  /** the holder name an import brings (PDF "Olá, NAME", a "Cliente:" line, a card-holder column) -> name | null */
+  function importHolder(analysis, result) {
+    const a = analysis || {};
+    return (a.pdf && a.pdf.meta && a.pdf.meta.holder) || a.holder || (result && result.holder) || null;
   }
 
   function textToRows(text, delimiter) {
@@ -1507,7 +1591,7 @@
       if (c.role && c.role !== 'ignore' && cols[c.role] == null) cols[c.role] = c.index;
     }
     const columns = {};
-    for (const k of ['date', 'time', 'description', 'amount', 'debit', 'credit', 'dcFlag', 'installment', 'balance', 'fxAmount', 'fxCurrency', 'fxRate', 'tag', 'section', 'detail']) if (cols[k] != null) columns[k] = cols[k];
+    for (const k of ['date', 'time', 'description', 'amount', 'debit', 'credit', 'dcFlag', 'installment', 'balance', 'fxAmount', 'fxCurrency', 'fxRate', 'tag', 'section', 'detail'].concat(INFO_ROLES)) if (cols[k] != null) columns[k] = cols[k];
     const hdr = a.headerRowIndex != null && a.rows ? a.rows[a.headerRowIndex].filter(Boolean).slice(0, 4).join(', ') : (a.columns || []).length + ' colunas';
     const p = {
       id: 'prof_' + hashStr(a.fingerprint || JSON.stringify(columns)),
@@ -1583,11 +1667,27 @@
     const errors = [];
     const pending = [];
     const fxNames = { dollar: rows.slice(0, 60).some(r => /D[OÓ]LAR/i.test(r.join(' '))) };
+    const holders = {};
+    const skipped = [];
+    // a statement printed page by page repeats its header row (and the lines above it) on every page: those rows are
+    // left out, never errors
+    const sig = r => r.map(x => norm(x)).filter(Boolean).join('|');
+    const hdrSig = profile.headerRowIndex != null && rows[profile.headerRowIndex] ? sig(rows[profile.headerRowIndex]) : null;
+    const preSigs = new Set(), preLabels = new Set();
+    for (let i = 0; i < Math.min(start, rows.length); i++) {
+      const s0 = sig(rows[i]); if (!s0 || s0 === hdrSig) continue;
+      preSigs.add(s0);
+      const first = rows[i].find(Boolean);
+      if (first && /:\s*$/.test(first)) preLabels.add(norm(first));
+    }
     for (let i = start; i < rows.length; i++) {
       const r = rows[i];
       const nonEmpty = r.filter(Boolean).length;
       if (!nonEmpty) continue;
-      if (rowMatchesSkip(r, skipRes, c.description)) continue;
+      const s1 = sig(r);
+      if (hdrSig && s1 === hdrSig) { skipped.push({ rowIndex: i, reason: 'cabeçalho repetido' }); continue; }
+      if (preSigs.has(s1) || preLabels.has(norm(r.find(Boolean)))) { skipped.push({ rowIndex: i, reason: 'topo do arquivo repetido' }); continue; }
+      if (rowMatchesSkip(r, skipRes, c.description)) { skipped.push({ rowIndex: i, reason: 'saldo ou total' }); continue; }
       const raw = r.filter(Boolean).join(' | ');
       const dp = parseDateParts(r[c.date] || '', profile.dateFormat);
       if (!dp) { if (nonEmpty >= 2) errors.push({ rowIndex: i, raw, reason: 'data inválida' }); continue; }
@@ -1602,6 +1702,21 @@
       if (c.tag != null && r[c.tag]) extra.tags = [String(r[c.tag]).trim()];
       if (c.section != null && r[c.section]) extra.section = String(r[c.section]).trim().slice(0, 80);
       if (c.detail != null && r[c.detail]) extra.detail = String(r[c.detail]).trim().slice(0, 160);
+      // v2.5: who paid / received, the bank's transaction type, currency exchange (kept for transfer detection)
+      const cell = k => (c[k] != null && r[c[k]] != null ? String(r[c[k]]).trim() : '');
+      const amt0 = am.amount;
+      const cpName = cell('counterparty') || (amt0 > 0 ? cell('payer') || cell('payee') : cell('payee') || cell('payer'));
+      if (cpName && /[A-Za-zÀ-ÿ]{2}/.test(cpName)) extra.counterparty = cpName.slice(0, 120);
+      if (cell('txType')) extra.txType = cell('txType').slice(0, 60);
+      if (cell('fxFrom') && cell('fxTo') && cell('fxFrom').toUpperCase() !== cell('fxTo').toUpperCase()) {
+        const ex = { from: cell('fxFrom').toUpperCase(), to: cell('fxTo').toUpperCase() };
+        const ta = cell('fxToAmount') ? parseAmount(cell('fxToAmount'), /,\d{1,2}$/.test(cell('fxToAmount')) ? 'br' : 'us') : null;
+        if (ta != null) ex.toAmount = Math.abs(ta);
+        const rt = c.fxRate != null ? parseRate(r[c.fxRate]) : null;
+        if (rt) ex.rate = rt;
+        extra.exchange = ex;
+      }
+      if (cell('holder')) holders[cell('holder')] = (holders[cell('holder')] || 0) + 1;
       pending.push({ i, dp, amount: am.amount, foreignOnly: am.foreignOnly, desc: desc || '(sem descrição)', instCell: c.installment != null ? r[c.installment] : '', time, balance, fx: am.fx || null, extra });
     }
     // resolve year-less dates
@@ -1627,12 +1742,16 @@
     let total = 0;
     const accountId = opts.accountId || profile.defaultAccountId || 'conta';
     const importId = opts.importId || 'imp_' + hashStr(String(Date.now()));
-    const shiftInst = profile.installmentDate !== 'as_is';
     for (const p of pending) {
-      const purchaseDate = p.dp.y + '-' + pad2(p.dp.m) + '-' + pad2(p.dp.d);
-      const nd = normalizeDescription(p.desc);
-      let installment = nd.installment;
-      if (p.instCell) installment = parseInstallmentText(p.instCell) || installment;
+      p.purchaseDate = p.dp.y + '-' + pad2(p.dp.m) + '-' + pad2(p.dp.d);
+      p.nd = normalizeDescription(p.desc);
+      p.installment = p.instCell ? parseInstallmentText(p.instCell) || p.nd.installment : p.nd.installment;
+    }
+    const shiftInst = profile.installmentDate === 'as_is' ? false : profile.installmentDate === 'shift' ? true : !installmentsPosted(pending);
+    for (const p of pending) {
+      const purchaseDate = p.purchaseDate;
+      const nd = p.nd;
+      const installment = p.installment;
       // each parcela counts in the month of the parcela: n of N bought on D is booked on D + (n-1) months
       const date = installment && shiftInst ? shiftDateMonths(purchaseDate, installment.n - 1) : purchaseDate;
       const key = date + '|' + p.amount + '|' + p.desc + '|' + accountId + (installment ? '|p' + installment.n + '/' + installment.total : '');
@@ -1665,7 +1784,19 @@
       transactions.push(tx);
     }
     linkFxIof(transactions);
-    return { transactions, errors, total, needRates };
+    const holder = Object.entries(holders).sort((a, b) => b[1] - a[1]).map(x => x[0])[0] || null;
+    return Object.assign({ transactions, errors, total, needRates, skipped, installmentDate: shiftInst ? 'shift' : 'as_is' }, holder ? { holder } : {});
+  }
+  /** true when the file prints each parcela n>1 on its POSTING date (inside the bill's period) instead of the purchase
+   *  date: most of them fall among the other rows' dates (up to 10 days before the first one, a bill's first days often
+   *  have no purchase) and moving them n−1 months would push them past the last row. Without other rows: unknown → false. */
+  function installmentsPosted(pending) {
+    const plain = pending.filter(p => !p.installment).map(p => p.purchaseDate).sort();
+    const later = pending.filter(p => p.installment && p.installment.n > 1);
+    if (!plain.length || !later.length) return false;
+    const lo = addDays(plain[0], -10), hi = plain[plain.length - 1];
+    const posted = later.filter(p => p.purchaseDate >= lo && p.purchaseDate <= hi && shiftDateMonths(p.purchaseDate, p.installment.n - 1) > addDays(hi, 3)).length;
+    return posted / later.length >= 0.6;
   }
   /** v2.4b: foreign-currency columns of a row. A row with a foreign amount AND a BRL amount books the BRL one and keeps
    *  fx = { currency, amount, rate? }; a row in a foreign currency only (profile.currency, or a Moeda column naming a
@@ -1695,8 +1826,19 @@
     }
     if (am.error) return am;
     const cur = rowCur || (profile.currency && profile.currency !== 'BRL' ? profile.currency : null);
-    if (cur && cur !== 'BRL') return { amount: am.amount, foreignOnly: true, fx: { currency: cur, amount: am.amount, rate } };
+    if (cur && cur !== 'BRL') return { amount: am.amount, foreignOnly: true, fx: { currency: cur, amount: am.amount, rate: brlRateOfRow(r, c, cur, rate) } };
     return am;
+  }
+  /** The file's rate is a BRL rate only when it can be: with "Exchange From/To" columns it is the rate between THOSE two
+   *  currencies (USD→CNY on a card purchase abroad is not a BRL rate) — BRL→cur gives 1/rate, cur→BRL the rate, any
+   *  other pair none (the month's rate from settings.fxRates is used). Without from/to columns the rate is taken as is. */
+  function brlRateOfRow(r, c, cur, rate) {
+    if (!rate) return null;
+    if (c.fxFrom == null && c.fxTo == null) return rate;
+    const f = cellStr(r[c.fxFrom]).toUpperCase(), t = cellStr(r[c.fxTo]).toUpperCase();
+    if (f === 'BRL' && t === cur) return Math.round(1 / rate * 10000) / 10000;
+    if (f === cur && t === 'BRL') return rate;
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -1742,6 +1884,10 @@
           if (e.accountId !== t.accountId || e.amount !== t.amount) continue;
           if (!sameInstallment(e, t)) continue; // parcela 4/10 is never a duplicate of 3/10
           if (Math.abs(dayNum(e.date) - dn) > 2) continue;
+          // two rows that each carry a running balance (or a time of day) that differ are two movements — e.g. the same
+          // tiny daily yield on the last day of one statement and the first day of the next
+          if (e.balance != null && t.balance != null && e.balance !== t.balance) continue;
+          if (e.time && t.time && e.time !== t.time) continue;
           if (!merchantSimilar(e.merchant || e.rawDescription, t.merchant || t.rawDescription)) continue;
           hit = i; break;
         }
@@ -1779,6 +1925,8 @@
         if (b === c || b.accountId === c.accountId || b.amount !== -c.amount || usedBank.has(b)) continue;
         if (isCardAcc(b) || (b.kind && b.kind !== 'expense' && b.kind !== 'card_payment')) continue;
         if (b.catSource === 'manual' && b.kind !== 'card_payment') continue;
+        // a Pix/TED to a PERSON (you or anyone) is never a bill payment — bills are paid to the issuer
+        if (!CARD_PAYMENT_RE.test(norm(b.rawDescription))) { const cp = counterparty(b); if (cp && cp.name && !cp.company && !cp.institution) continue; }
         const dd = Math.abs(dayNum(b.date) - dayNum(c.date));
         if (dd > 5) continue;
         const d = norm(b.rawDescription) + ' ' + norm(b.merchant);
@@ -1789,7 +1937,12 @@
       const pool = hinted.length ? hinted : (cands.length === 1 ? cands : []);
       pool.sort((x, y) => x.dd - y.dd);
       const best = pool.length ? pool[0].b : null;
-      if (best) { usedBank.add(best); mark(best); best.linkedTo = c.id; c.linkedTo = best.id; }
+      if (best) {
+        // a row linked on an earlier import (before the better match arrived) lets go: same result in any import order
+        const prev = c.linkedTo && c.linkedTo !== best.id ? txs.find(o => o.id === c.linkedTo && o.linkedTo === c.id) : null;
+        if (prev) { delete prev.linkedTo; if (prev.kind === 'card_payment' && prev.catSource !== 'manual' && !CARD_PAYMENT_RE.test(norm(prev.rawDescription) + ' | ' + norm(prev.merchant))) { prev.kind = prev.amount < 0 ? 'expense' : 'income'; delete prev.cardAccountId; } }
+        usedBank.add(best); mark(best); best.linkedTo = c.id; c.linkedTo = best.id;
+      }
     }
     return txs;
   }
@@ -2424,7 +2577,7 @@
     return { imports: out, added };
   }
 
-  const SCHEMA_VERSION = 2;
+  const SCHEMA_VERSION = 3;
   /** Idempotent data migration to schema 2. Input/Output "flat" data:
    *  { settings, categories, rules, history, profiles, accounts, imports, txs }.
    *  - D3: kind follows the category group (renda.* income, investimentos.* investment, else expense)
@@ -2511,6 +2664,23 @@
       u.updatedAt = now; report.recategorized++; changedTx.add(u.id);
       return u;
     });
+    // v2.5 (schema 3): one review of transfers between own accounts — pairs, conversions, card payments, investment moves
+    // and (when settings.ownerNames is set) your own name; high-confidence changes only, never manual rows. What changed is
+    // kept in settings.transferReview so the app can show it and undo it ("Desfazer revisão").
+    if ((report.schemaFrom || 1) < 3 && opts.transfers !== false) {
+      const dt = detectTransfers(txs, { accounts: d.accounts, settings: d.settings });
+      if (dt.changes.length) {
+        const ch = new Map(dt.changed.map(t => [t.id, Object.assign({}, t, { updatedAt: now })]));
+        txs = txs.map(t => (t && ch.has(t.id) ? ch.get(t.id) : t));
+        for (const id of ch.keys()) changedTx.add(id);
+      }
+      const byReason = {};
+      dt.changes.forEach(c => { byReason[c.reason] = (byReason[c.reason] || 0) + 1; });
+      d.settings = Object.assign({}, d.settings, { transferReview: { at: now, version: 1, counts: dt.counts, rows: byReason,
+        changes: dt.changes.slice(0, 3000).map(c => ({ id: c.id, reason: c.reason, prev: c.prev })) } });
+      changedMeta.add('settings');
+      report.transfers = dt.counts; report.transferChanges = dt.changes.length;
+    }
     const bi = backfillImports(txs, d.imports);
     if (bi.added || !d.imports) changedMeta.add('imports');
     d.imports = bi.imports; report.importsAdded = bi.added;
@@ -2836,7 +3006,8 @@
     let bank = 0, card = 0;
     const n = list.length;
     const bal = list.filter(t => t.balance != null).length;
-    const bankish = list.filter(t => BANKISH_RE.test(norm(t.rawDescription)) && !CARD_PAYMENT_RE.test(norm(t.rawDescription))).length;
+    // the bank's own transaction type column ("Pix enviado", "TRANSFER") says it as well as the description
+    const bankish = list.filter(t => { const d = norm(t.rawDescription + ' ' + (t.txType || '')); return BANKISH_RE.test(d) && !CARD_PAYMENT_RE.test(norm(t.rawDescription)); }).length;
     const timed = list.filter(t => t.time).length;
     const inst = list.filter(t => t.installment).length;
     const pos = list.filter(t => t.amount > 0 && t.kind !== 'card_payment').length;
@@ -2844,6 +3015,15 @@
     if (bankish / n >= 0.2) bank += 3;
     if (timed / n >= 0.5) bank += 2;
     if (pos / n >= 0.2) bank += 1;
+    // v2.5: mostly money IN (salary, Pix received) is an account statement, never a card bill — even with bare
+    // descriptions (no Pix/TED words, no balance column)
+    if (pos / n >= 0.5 && n >= 4) bank += 3;
+    // salary / income rows (renda.*) never come on a card bill; the file name often says what it is
+    const earned = list.filter(t => t.amount > 0 && t.kind === 'income' && /^renda\./.test(String(t.categoryId || '')) && !/BENEFICIO|VALE/.test(norm(t.rawDescription))).length;
+    if (earned >= 2) bank += 3;
+    const fn = norm(rec && rec.fileName).replace(/[_.\-]+/g, ' '); // "Extrato_2026-01..." — "_" is a word character
+    if (/\bEXTRATO\b|\bSTATEMENT\b/.test(fn) && !/\bFATURA\b/.test(fn)) bank += 3;
+    else if (/\bFATURA\b/.test(fn) && !/\bEXTRATO\b/.test(fn)) card += 3;
     if (inst / n >= 0.03) card += 3;
     if (pos / n < 0.1 && n >= 5) card += 2;
     if (bank >= 3 && bank > card) return 'extrato';
@@ -2899,10 +3079,12 @@
     run('a', () => {
       const by = {};
       for (const t of txs) { (by[t.accountId] = by[t.accountId] || new Set()).add(monthOf(t.date)); }
+      // a month inside the period a statement says it covers (its file name) simply had no movement
+      const coveredBy = (acc, m) => impInfo.some(i => i.accountId === acc && i.coverFrom <= m + '-01' && i.coverTo >= dayIn(m, 31));
       for (const acc of Object.keys(by)) {
         const ms = [...by[acc]].sort();
         for (let m = ms[0]; m < ms[ms.length - 1]; m = addMonths(m, 1)) {
-          if (by[acc].has(m)) continue;
+          if (by[acc].has(m) || coveredBy(acc, m)) continue;
           push({ id: 'a:gap:' + acc + ':' + m, severity: 'blocking', title: 'Mês sem lançamentos em ' + accName(acc),
             detail: accName(acc) + ' tem lançamentos antes e depois de ' + fmtM(m) + ', mas nenhum neste mês. Falta importar o extrato ou a fatura desse período.',
             months: [m], accountId: acc, action: { type: 'import', label: 'Importar ' + (typeOf(acc) === 'credit_card' ? 'fatura' : 'extrato') + ' de ' + monthName(m), accountId: acc, month: m } });
@@ -2959,7 +3141,8 @@
         for (const f of faturas) {
           const acc = cards.find(a => a.id === f.i.accountId); if (!acc) continue;
           const plain = f.i.list.filter(t => !t.installment && t.kind !== 'card_payment').map(t => t.date).sort();
-          const g = { kind: f.i.kind, fileDates: fileDates(f.i.rec.fileName), min: plain[0] || f.from, max: plain[plain.length - 1] || f.to, dates: plain };
+          // the due date printed on a PDF fatura counts like a date in the file name (same as importGroups)
+          const g = { kind: f.i.kind, fileDates: (isoRe.test(f.i.rec.dueDate || '') ? [f.i.rec.dueDate] : []).concat(fileDates(f.i.rec.fileName)), min: plain[0] || f.from, max: plain[plain.length - 1] || f.to, dates: plain };
           const c = cycleOfImport(g, cardCycles(acc, { from: addDays(f.from, -60), to: addDays(f.to, 60) }));
           if (c) { cycOf.set(f, acc.id + ':' + c.ym); f.cycle = c; }
         }
@@ -2977,8 +3160,9 @@
         }
       }
       const otherCycle = (p, f) => { const pc = viaCycle.get(p); return !!(pc && cycOf.has(f) && cycOf.get(f) !== pc.key); };
-      const mismatch = (p, f) => {
-        const diff = -p.amount - f.total; // > 0: paid more than the purchases in the file
+      const mismatch = (p, f, paid, n) => {
+        paid = paid == null ? -p.amount : paid;
+        const diff = paid - f.total; // > 0: paid more than the purchases in the file
         // a fatura row of exactly that amount may have been dropped on import as a "repeat" of a row from
         // ANOTHER import of the same account (typically an extrato kept inside the card account)
         const lookalike = diff > 0 ? txs.find(t => t.importId !== f.i.id && t.amount === -diff && t.kind === 'expense' &&
@@ -2988,20 +3172,34 @@
           : diff > 0 ? ' Pagou-se mais do que as compras da fatura importada: pode faltar um lançamento nela (IOF, juros, tarifa, uma compra) ou o pagamento incluir saldo de outra fatura.'
             : ' Pagou-se menos do que a fatura: pode ter sido um pagamento parcial (o resto vai para a próxima fatura, com juros) ou a fatura ter um crédito que não veio no arquivo.';
         push({ id: 'c:mismatch:' + p.id, severity: 'warning', title: 'Pagamento não bate com a fatura',
-          detail: 'O pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ' difere em ' + formatBRL(Math.abs(diff)) + ' do total da fatura "' + f.i.name + '" (' + formatBRL(f.total) + ', ' + (f.cycle && f.cycle.dueDate ? 'vencimento ' + f.cycle.dueDate.split('-').reverse().join('/') + ', compras de ' + brDM(f.cycle.start) + ' a ' + brDM(f.cycle.end) : 'compras até ' + f.to.split('-').reverse().join('/')) + ').' + why,
+          detail: (n > 1 ? 'Os ' + n + ' pagamentos dessa fatura (' + formatBRL(paid) + ', o último em ' : 'O pagamento de fatura de ' + formatBRL(paid) + ' em ') + p.date.split('-').reverse().join('/') + (n > 1 ? ')' : '') + ' difere' + (n > 1 ? 'm' : '') + ' em ' + formatBRL(Math.abs(diff)) + ' do total da fatura "' + f.i.name + '" (' + formatBRL(f.total) + ', ' + (f.cycle && f.cycle.dueDate ? 'vencimento ' + f.cycle.dueDate.split('-').reverse().join('/') + ', compras de ' + brDM(f.cycle.start) + ' a ' + brDM(f.cycle.end) : 'compras até ' + f.to.split('-').reverse().join('/')) + ').' + why,
           months: [monthOf(f.to)], accountId: f.i.accountId, importIds: [f.i.id, p.importId].filter(Boolean), txIds: lookalike ? [lookalike.id] : undefined });
       };
       // the cycle of each payment first (cards with closing/due day), then exact amounts (anywhere in the window),
       // then the closest unused fatura by date
-      for (const p of pays) {
-        const pc = viaCycle.get(p); if (!pc) continue;
-        const f = faturas.find(f => !used.has(f) && cycOf.get(f) === pc.key);
-        if (f) { used.add(f); matched.add(p); if (Math.abs(f.total + p.amount) > 100) mismatch(p, f); }
+      // a fatura is often paid in parts (minimum now, the rest days later): every payment of one cycle counts together
+      const byCycle = new Map();
+      for (const p of pays) { const pc = viaCycle.get(p); if (!pc) continue; if (!byCycle.has(pc.key)) byCycle.set(pc.key, []); byCycle.get(pc.key).push(p); }
+      for (const [key, ps] of byCycle) {
+        const f = faturas.find(f => !used.has(f) && cycOf.get(f) === key);
+        if (!f) continue;
+        used.add(f); ps.forEach(p => matched.add(p));
+        const paid = ps.reduce((sum, p) => sum - p.amount, 0);
+        if (Math.abs(f.total - paid) > 100) mismatch(ps[ps.length - 1], f, paid, ps.length);
       }
       for (const p of pays) {
         if (matched.has(p)) continue;
         const f = faturas.find(f => !used.has(f) && !otherCycle(p, f) && inWindow(p, f) && Math.abs(f.total + p.amount) <= 100);
         if (f) { used.add(f); matched.add(p); }
+      }
+      // a payment that, added to the one already matched to a fatura, makes its total (paid in two parts)
+      const paidTo = new Map();
+      for (const p of pays) {
+        if (matched.has(p)) continue;
+        const cards0 = new Set(accounts.filter(a => a.type === 'credit_card').map(a => a.id));
+        const f = faturas.find(f => used.has(f) && !otherCycle(p, f) && inWindow(p, f) && (!p.cardAccountId || !cards0.has(p.cardAccountId) || p.cardAccountId === f.i.accountId) &&
+          pays.some(q => q !== p && matched.has(q) && Math.abs(f.total + q.amount + p.amount) <= 100 && Math.abs(dayNum(q.date) - dayNum(p.date)) <= 20));
+        if (f) { matched.add(p); paidTo.set(p, f); }
       }
       for (const p of pays) {
         if (matched.has(p)) continue;
@@ -3021,14 +3219,18 @@
         } else {
           const miss = addMonths(pm, -1);
           // the card: the account of the faturas imported closest to this payment (else the only card account)
-          const near = faturas.slice().sort((a, b) => Math.abs(dayNum(a.from) - dayNum(p.date)) - Math.abs(dayNum(b.from) - dayNum(p.date)))[0];
-          const cardAccId = near ? near.i.accountId : ((accounts.find(a => a.type === 'credit_card') || {}).id);
-          const nextF = faturas.filter(f => f.to > p.date).sort((a, b) => a.to.localeCompare(b.to))[0];
-          const prevF = faturas.filter(f => f.to < addDays(p.date, -45)).sort((a, b) => b.to.localeCompare(a.to))[0];
+          // the card it paid when known (linked card row / picked card), so the neighbours named are faturas of THAT card
+          const lk = p.linkedTo && txs.find(t => t.id === p.linkedTo);
+          const knownCard = lk && typeOf(lk.accountId) === 'credit_card' ? lk.accountId : (p.cardAccountId && typeOf(p.cardAccountId) === 'credit_card' ? p.cardAccountId : null);
+          const pool = knownCard ? faturas.filter(f => f.i.accountId === knownCard) : faturas;
+          const near = pool.slice().sort((a, b) => Math.abs(dayNum(a.from) - dayNum(p.date)) - Math.abs(dayNum(b.from) - dayNum(p.date)))[0];
+          const cardAccId = knownCard || (near ? near.i.accountId : ((accounts.find(a => a.type === 'credit_card') || {}).id));
+          const nextF = pool.filter(f => f.to > p.date).sort((a, b) => a.to.localeCompare(b.to))[0];
+          const prevF = pool.filter(f => f.to < addDays(p.date, -45)).sort((a, b) => b.to.localeCompare(a.to))[0];
           const upTo = nextF ? addDays(nextF.from, -1) : null;
           const where = nextF && prevF ? ' — fica entre "' + prevF.i.name + '" e "' + nextF.i.name + '"' : nextF ? ' — é a anterior a "' + nextF.i.name + '"' : prevF ? ' — é a seguinte a "' + prevF.i.name + '"' : '';
           push({ id: 'c:no-fatura:' + p.id, severity: 'blocking', title: 'Pagamento de fatura sem a fatura',
-            detail: 'Há um pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ', mas a fatura que ele pagou não foi importada. Importe a fatura com vencimento em ' + fmtM(pm) + where + '. As compras dela (' + (upTo ? 'até ' + upTo.split('-').reverse().join('/') : 'de ' + fmtM(miss)) + ') não estão no app, por isso ' + monthName(miss) + ' fica fora do déficit acumulado.',
+            detail: 'Há um pagamento de fatura de ' + formatBRL(-p.amount) + ' em ' + p.date.split('-').reverse().join('/') + ', mas a fatura que ele pagou não foi importada. Importe a fatura ' + (knownCard ? 'de ' + accName(knownCard) + ' ' : '') + 'com vencimento em ' + fmtM(pm) + where + '. As compras dela (' + (upTo ? 'até ' + upTo.split('-').reverse().join('/') : 'de ' + fmtM(miss)) + ') não estão no app, por isso ' + monthName(miss) + ' fica fora do déficit acumulado.',
             months: [miss], accountId: cardAccId || undefined, importIds: [p.importId].filter(Boolean),
             action: { type: 'import', label: 'Importar fatura (venc. ' + monthName(pm) + ')', accountId: cardAccId || null, month: miss } });
         }
@@ -3049,24 +3251,26 @@
 
     // d. running-balance breaks inside an import, and between consecutive imports of one account
     run('d', () => {
+      // a statement kept in a foreign currency (USD account…) prints its balance in that currency: compare in it
+      const amt = t => (t.fx && (t.fx.source === 'file' || t.fx.source === 'manual') && t.fx.amount != null ? t.fx.amount : t.amount);
       const chains = [];
       for (const i of impInfo) {
         const rows = i.list.filter(t => t.balance != null && t.rowIndex != null).sort((a, b) => a.rowIndex - b.rowIndex);
         if (rows.length < 2 || rows.length < i.list.length * 0.5) continue;
         let fw = 0, bw = 0;
         for (let k = 1; k < rows.length; k++) {
-          if (Math.abs(rows[k - 1].balance + rows[k].amount - rows[k].balance) <= 1) fw++;
-          if (Math.abs(rows[k].balance + rows[k - 1].amount - rows[k - 1].balance) <= 1) bw++;
+          if (Math.abs(rows[k - 1].balance + amt(rows[k]) - rows[k].balance) <= 1) fw++;
+          if (Math.abs(rows[k].balance + amt(rows[k - 1]) - rows[k - 1].balance) <= 1) bw++;
         }
         const seq = bw > fw ? rows.slice().reverse() : rows; // chronological order
         const other = txs.filter(t => t.accountId === i.accountId && t.importId !== i.id);
         const breaks = [];
         for (let k = 1; k < seq.length; k++) {
           const a = seq[k - 1], b = seq[k];
-          const diff = b.balance - b.amount - a.balance;
+          const diff = b.balance - amt(b) - a.balance;
           if (Math.abs(diff) <= 1) continue;
           // rows removed as duplicates of another import still moved the balance
-          const explained = other.filter(t => t.date >= a.date && t.date <= b.date).reduce((s, t) => s + t.amount, 0);
+          const explained = other.filter(t => t.date >= a.date && t.date <= b.date).reduce((s, t) => s + amt(t), 0);
           if (Math.abs(explained - diff) <= 1) continue;
           breaks.push({ a, b, diff });
         }
@@ -3085,7 +3289,7 @@
         for (let k = 1; k < cs.length; k++) {
           const A = cs[k - 1], B = cs[k];
           if (B.first.date < A.last.date) continue; // overlapping: dedupe handles it
-          const opening = B.first.balance - B.first.amount;
+          const opening = B.first.balance - amt(B.first);
           if (Math.abs(opening - A.last.balance) <= 1) continue;
           push({ id: 'd:gap:' + A.i.id + ':' + B.i.id, severity: 'blocking', title: 'Saldo não continua entre dois extratos',
             detail: '"' + A.i.name + '" termina com saldo ' + formatBRL(A.last.balance) + ' e "' + B.i.name + '" começa a partir de ' + formatBRL(opening) + '. Faltam lançamentos entre ' + A.last.date.split('-').reverse().join('/') + ' e ' + B.first.date.split('-').reverse().join('/') + '.',
@@ -3136,33 +3340,70 @@
     // f. transfers to/from the user's own name at institutions with no account in the app
     run('f', () => {
       const owners = (settings.ownerNames || []).filter(Boolean);
+      const trackedBanks = new Set(accounts.map(a => accountBank(a)).filter(Boolean));
       const cps = [];
       for (const t of txs) {
-        if (t.kind === 'card_payment') continue;
-        const c = counterpartyOf(t);
-        if (c && !COMPANY_RE.test(c.name)) cps.push({ t, c });
+        if (t.kind === 'card_payment' || t.transferSubtype === 'conversion') continue;
+        const c = counterparty(t);
+        if (c && c.name && !c.company) cps.push({ t, c });
       }
       if (owners.length) {
-        const own = cps.filter(x => owners.some(o => nameMatches(x.c.name, o)));
-        const unmatched = own.filter(x => !txs.some(o => o.accountId !== x.t.accountId && o.amount === -x.t.amount && Math.abs(dayNum(o.date) - dayNum(x.t.date)) <= 3));
+        const own = cps.filter(x => isOwnName(x.c.name, owners));
+        const byId = new Map(txs.map(t => [t.id, t]));
+        // money to/from your name with no matching row in another account of the app (a tracked bank is check "m")
+        const unmatched = own.filter(x => !(x.t.linkedTo && byId.get(x.t.linkedTo)) && !(x.c.bankKey && trackedBanks.has(x.c.bankKey) && x.c.bankKey !== accountBank(accById[x.t.accountId])) &&
+          !txs.some(o => o.accountId !== x.t.accountId && o.amount === -x.t.amount && Math.abs(dayNum(o.date) - dayNum(x.t.date)) <= 3));
         const notTransfer = unmatched.filter(x => x.t.kind !== 'transfer');
         if (unmatched.length) {
           const months = [...new Set(unmatched.map(x => monthOf(x.t.date)))].sort();
-          push({ id: 'f:own:' + months.join(','), severity: 'warning', title: 'Dinheiro indo e vindo de outra conta sua',
-            detail: unmatched.length + ' Pix/TED em seu nome (' + formatBRL(unmatched.filter(x => x.t.amount > 0).reduce((s, x) => s + x.t.amount, 0)) + ' entrando, ' + formatBRL(-unmatched.filter(x => x.t.amount < 0).reduce((s, x) => s + x.t.amount, 0)) + ' saindo) vêm de ou vão para uma conta sua que não está no app. ' +
-              (notTransfer.length ? notTransfer.length + ' deles conta' + (notTransfer.length > 1 ? 'm' : '') + ' como entrada/gasto. ' : '') + 'Importe essa conta ou marque como transferência.',
+          const banks = [...new Set(unmatched.map(x => x.c.bankKey).filter(Boolean))].map(k => BANK_LBL[k] || k);
+          push({ id: 'f:own:' + months.join(','), severity: notTransfer.length ? 'warning' : 'info', title: notTransfer.length ? 'Dinheiro indo e vindo de outra conta sua' : 'Transferências para contas suas fora do app',
+            detail: unmatched.length + ' Pix/TED em seu nome (' + formatBRL(unmatched.filter(x => x.t.amount > 0).reduce((s, x) => s + x.t.amount, 0)) + ' entrando, ' + formatBRL(-unmatched.filter(x => x.t.amount < 0).reduce((s, x) => s + x.t.amount, 0)) + ' saindo) vêm de ou vão para uma conta sua que não está no app' + (banks.length ? ' (' + banks.join(', ') + ')' : '') + '. ' +
+              (notTransfer.length ? notTransfer.length + ' deles conta' + (notTransfer.length > 1 ? 'm' : '') + ' como entrada/gasto. Importe essa conta ou marque como transferência.' : 'Já contam como transferência (fora de entradas e gastos). Importe essa conta para ver o caminho completo do dinheiro.'),
             months, txIds: unmatched.map(x => x.t.id),
             action: notTransfer.length ? { type: 'mark-transfer', label: 'Marcar como transferência', txIds: notTransfer.map(x => x.t.id) } : { type: 'import', label: 'Importar a outra conta' } });
         }
       } else {
         const freq = new Map();
-        for (const x of cps) { const k = x.c.name; const f = freq.get(k) || { n: 0, in: 0, out: 0, counted: 0, months: new Set() }; f.n++; if (x.t.kind !== 'transfer') f.counted++; f[x.c.dir === 'in' ? 'in' : 'out']++; f.months.add(monthOf(x.t.date)); freq.set(k, f); }
+        for (const x of cps) { const k = x.c.name; const f = freq.get(k) || { n: 0, in: 0, out: 0, counted: 0, months: new Set() }; f.n++; if (x.t.kind !== 'transfer') f.counted++; f[x.c.direction === 'in' ? 'in' : 'out']++; f.months.add(monthOf(x.t.date)); freq.set(k, f); }
         const best = [...freq.entries()].filter(([k, f]) => f.n >= 2 && k.split(' ').length >= 2).sort((a, b) => (b[1].in && b[1].out ? 1 : 0) - (a[1].in && a[1].out ? 1 : 0) || b[1].n - a[1].n)[0];
         if (best) {
           push({ id: 'f:ask:' + hashStr(best[0]), severity: 'info', title: 'Estas transferências são suas?',
             detail: best[1].n + ' Pix/TED ' + (best[1].in && best[1].out ? 'de e para' : best[1].in ? 'recebidos de' : 'enviados para') + ' "' + best[0] + '". Se for você mesmo (outra conta sua), elas não são renda nem gasto' + (best[1].counted ? ' — hoje ' + best[1].counted + (best[1].counted > 1 ? ' estão contando' : ' está contando') + ' como entrada/gasto.' : ' (já estão como transferência; confirmar ajuda a reconhecer as próximas e a avisar se faltar essa conta no app).'),
             months: [...best[1].months].sort(), action: { type: 'owner-name', label: 'Isto é você?', name: best[0] } });
         }
+      }
+    });
+
+    // m. (v2.5) money sent to one of your accounts that IS in the app, but no entry there although that account's rows cover
+    // the days after it
+    run('m', () => {
+      const owners = (settings.ownerNames || []).filter(Boolean);
+      const byId = new Map(txs.map(t => [t.id, t]));
+      const span = {};
+      for (const t of txs) { const s0 = span[t.accountId] || (span[t.accountId] = { min: t.date, max: t.date }); if (t.date < s0.min) s0.min = t.date; if (t.date > s0.max) s0.max = t.date; }
+      const bankAcc = new Map();
+      for (const a of accounts) { const b = accountBank(a); if (b && a.type !== 'credit_card' && a.type !== 'payslip') { if (!bankAcc.has(b)) bankAcc.set(b, []); bankAcc.get(b).push(a); } }
+      for (const t of txs) {
+        if (t.kind !== 'transfer' || t.amount >= 0 || t.transferSubtype === 'conversion' || typeOf(t.accountId) === 'credit_card') continue;
+        if (t.linkedTo && byId.get(t.linkedTo)) continue;
+        let dest = t.transferAccountId && t.transferAccountId !== 'external' && accById[t.transferAccountId] ? accById[t.transferAccountId] : null;
+        let viaInst = false;
+        if (!dest) {
+          const c = counterparty(t);
+          viaInst = !!(c && c.institution);
+          const bk = c ? (c.institution || ((c.name && !c.company && (!owners.length || isOwnName(c.name, owners))) ? c.bankKey : null)) : null;
+          const list = bk ? (bankAcc.get(bk) || []).filter(a => a.id !== t.accountId) : [];
+          if (list.length === 1) dest = list[0];
+        }
+        if (!dest || dest.id === t.accountId) continue;
+        const sp = span[dest.id];
+        if (!sp || sp.min > t.date || sp.max < addDays(t.date, 4)) continue; // that account's rows do not cover those days
+        // an entry of that amount there (any kind) within 0–4 days is the other side — maybe still counted as income
+        const near = txs.find(o => o.accountId === dest.id && o.amount > 0 && Math.abs(o.amount + t.amount) <= Math.max(500, -t.amount * 0.01) && dayNum(o.date) - dayNum(t.date) >= -1 && dayNum(o.date) - dayNum(t.date) <= 4);
+        push({ id: 'm:nopair:' + t.id, severity: 'warning', title: 'Transferência sem entrada correspondente',
+          detail: 'Saíram ' + formatBRL(-t.amount) + ' de ' + accName(t.accountId) + ' em ' + t.date.split('-').reverse().join('/') + ' para ' + (dest.name || dest.id) + ', mas ' + (near ? 'a entrada de ' + formatBRL(near.amount) + ' em ' + near.date.split('-').reverse().join('/') + ' não está ligada a ela' + (near.kind === 'income' ? ' e conta como entrada' : '') + '. Confirme o par em Transferências.' : 'nenhuma entrada desse valor aparece lá até 4 dias depois, embora o extrato cubra esses dias. Falta um lançamento no extrato de ' + (dest.name || dest.id) + ', ou o dinheiro foi para outra conta' + (viaInst ? ' — ou foi um pagamento (uma compra paga com Pix à instituição), e então é um gasto' : '') + '.'),
+          months: [monthOf(t.date)], accountId: dest.id, txIds: [t.id].concat(near ? [near.id] : []), action: { type: 'transfers', label: 'Ver transferências' } });
       }
     });
 
@@ -3177,12 +3418,16 @@
         if (!groups.has(k)) groups.set(k, []);
         groups.get(k).push(t);
       }
+      // after a severance payment (rescisão / verbas rescisórias) that salary is not expected any more
+      const sever = all.filter(t => t.amount > 0 && /\bRESCIS|\bVERBAS RESCISORIAS\b/.test(norm(t.rawDescription + ' ' + (t.txType || '')))).map(t => monthOf(t.date)).sort();
+      const endedIn = sever.length ? sever[sever.length - 1] : null;
       for (const [k, list] of groups) {
         const ms = new Set(list.map(t => monthOf(t.date)));
         const typDay = list.map(t => +t.date.slice(8, 10)).sort((a, b) => a - b)[Math.floor(list.length / 2)];
         const months = [...dataMonths].sort();
         for (const m of months) {
           if (ms.has(m)) continue;
+          if (endedIn && m > endedIn && k !== 'payslip') continue;
           const prev = [1, 2, 3].filter(j => ms.has(addMonths(m, -j))).length;
           if (prev < 2) continue;
           const lastDay = maxDateInMonth[m];
@@ -3376,8 +3621,22 @@
       const mo = +iso.slice(5, 7), d = +iso.slice(8, 10);
       if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) ds.push(iso);
     }
+    if (!ds.length) ds.push.apply(ds, monthNameDates(name).slice(0, 3));
     if (ds.length !== 2 || ds[0] > ds[1]) return null;
     return ds;
+  }
+  /** dates written with the month's name in a file name: "01JAN2026", "31-dez-2026", "05_SET_26" → ISO */
+  function monthNameDates(name) {
+    const out = [];
+    const re = /(?<![0-9A-Za-z])(\d{1,2})[-_. ]?([A-Za-z]{3,9})[-_. ]?(\d{4}|\d{2})(?!\d)/g;
+    let m;
+    while ((m = re.exec(String(name || ''))) && out.length < 4) {
+      const mo = monthFromName(norm(m[2]));
+      if (!mo) continue;
+      const y = m[3].length === 2 ? 2000 + +m[3] : +m[3], d = +m[1];
+      if (y >= 2000 && y <= 2100 && d >= 1 && d <= daysInMonth(y, mo)) out.push(y + '-' + pad2(mo) + '-' + pad2(d));
+    }
+    return out;
   }
   function addDays(iso, k) { const d = new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + k)); return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()); }
   /** Months that data-health says are incomplete (blocking warnings), for the carry-over. -> { 'YYYY-MM': [titles] } */
@@ -3509,11 +3768,16 @@
       cmap.set(t.id, t);
     });
     const prev = new Map(live.map(t => [t.id, t]));
+    let rows = linked.map(t => (freshIds.has(t.id) ? cmap.get(t.id) || t : t));
+    // v2.5: transfers between your accounts (a new extrato can complete a pair left open before), conversions, card payments
+    if (ctx.transfers !== false) {
+      try { rows = detectTransfers(rows, { accounts: ctx.accounts || [], settings: ctx.settings || {}, ownerNames: ctx.ownerNames }).transactions; } catch (e) { /* keep the classified rows */ }
+    }
     const added = [], changed = [];
-    for (const t of linked) {
-      if (freshIds.has(t.id)) { added.push(cmap.get(t.id) || t); continue; }
+    for (const t of rows) {
+      if (freshIds.has(t.id)) { added.push(t); continue; }
       const p = prev.get(t.id);
-      if (p && (p.kind !== t.kind || p.categoryId !== t.categoryId || p.linkedTo !== t.linkedTo)) changed.push(t);
+      if (p && (p.kind !== t.kind || p.categoryId !== t.categoryId || p.linkedTo !== t.linkedTo || p.transferAccountId !== t.transferAccountId || p.cardAccountId !== t.cardAccountId || p.transferSubtype !== t.transferSubtype)) changed.push(t);
     }
     return { added, changed };
   }
@@ -3692,7 +3956,36 @@
     }
     let closingDay = null;
     const mc = mode(cands);
-    if (mc && (mc[1] >= 2 || groups.length === 1)) { closingDay = mc[0]; basis.push('Fechamento dia ' + closingDay + ': as compras de ' + groups.length + ' fatura' + (groups.length > 1 ? 's' : '') + ' começam/terminam por volta desse dia.'); }
+    // between two consecutive faturas the closing falls after the last purchase of the first and on/before the first
+    // purchase of the next; faturas with few purchases (a subscription on the same day every month) fool "the first
+    // purchase day", so the days allowed by every such window win (rows booked as printed only; payments left out)
+    const byDue = groups.filter(g => !g.closeDate).map(g => {
+      const ds = g.list.filter(t => t.kind !== 'card_payment' && !t.originalDate && t.amount < 0).map(t => t.date).sort();
+      const due = isoRe.test(g.rec.dueDate || '') ? g.rec.dueDate : g.fileDates.length === 1 ? g.fileDates[0] : null;
+      return { due, L: ds[ds.length - 1], F: ds[0] };
+    }).filter(x => x.due && x.L).sort((a, b) => a.due.localeCompare(b.due));
+    const votes = new Array(32).fill(0); let wins = 0;
+    for (let k = 1; k < byDue.length; k++) {
+      const A = byDue[k - 1], B = byDue[k];
+      if (dayNum(B.due) - dayNum(A.due) > 45) continue; // not consecutive
+      const len = dayNum(B.F) - dayNum(A.L);
+      if (len < 1 || len > 45) continue;
+      wins++;
+      const seen = new Set();
+      for (let d = 1; d <= len; d++) { const dd = +addDays(A.L, d).slice(8, 10); if (!seen.has(dd)) { seen.add(dd); votes[dd]++; } }
+    }
+    if (wins >= 2) {
+      const top = Math.max.apply(null, votes);
+      const best = []; for (let d = 1; d <= 31; d++) if (votes[d] === top) best.push(d);
+      if (top === wins && best.length <= 10 && !(mc && best.includes(mc[0]))) {
+        // nearest allowed day to the usual one (circular), else the first allowed day
+        const ref = mc ? mc[0] : best[0];
+        const dist = d => Math.min(Math.abs(d - ref), 31 - Math.abs(d - ref));
+        closingDay = best.slice().sort((a, b) => dist(a) - dist(b) || a - b)[0];
+        basis.push('Fechamento dia ' + closingDay + ': entre a última compra de uma fatura e a primeira da seguinte, em ' + wins + ' pares de faturas.');
+      }
+    }
+    if (!closingDay && mc && (mc[1] >= 2 || groups.length === 1)) { closingDay = mc[0]; basis.push('Fechamento dia ' + closingDay + ': as compras de ' + groups.length + ' fatura' + (groups.length > 1 ? 's' : '') + ' começam/terminam por volta desse dia.'); }
     // due day fallback: the fatura payments seen in the bank (paid on or a little before the due day)
     if (!dueDay) {
       const accounts = input.accounts || [];
@@ -4231,6 +4524,14 @@
         if (km) meta.cardLast4 = km[1] || km[2];
       }
       if (!meta.currency) { const cm2 = /\b(?:MOEDA|CURRENCY)\s*:?\s*([A-Z]{3})\b/.exec(f); if (cm2 && ISO_CODES.includes(cm2[1])) meta.currency = cm2[1]; }
+      // v2.5: the account holder ("Olá, Fulana", "Titular: …", "Nome: …") — a hint for "Quem é você nos extratos?"
+      if (!meta.holder) {
+        const hm = /^\s*OLA\s*,?\s+([A-Z][A-Z ]{2,60}?)\s*[!,.]?\s*$/.exec(f) || /\b(?:TITULAR|NOME\s+DO\s+CLIENTE|CLIENTE|NOME)\s*:\s*([A-Z][A-Z ]{4,60}?)\s*(?:$|\s{2,}|\bCPF\b|\bAG)/.exec(f);
+        if (hm && hm[1].trim().split(/\s+/).length >= 1 && !/\d/.test(hm[1])) {
+          const st = hm.index + hm[0].indexOf(hm[1]);
+          meta.holder = L.text.slice(st, st + hm[1].length).trim();
+        }
+      }
     }
     // a "Total da fatura de <month>" is the previous fatura when the month is not the due month, else this one
     const dueM = meta.dueDate ? +meta.dueDate.slice(5, 7) : null;
@@ -4744,8 +5045,688 @@
   }
 
   // ---------------------------------------------------------------------------
+  // v2.5 — money between the user's own accounts: identity, counterparties, transfer detection
+  // ---------------------------------------------------------------------------
+  const NAME_PARTICLES = new Set(['DE', 'DA', 'DO', 'DOS', 'DAS', 'E', 'DI', 'DU', 'DEL', 'DELLA', 'LA', 'LE', 'VAN', 'VON', 'Y']);
+  /** person-name tokens: accents/case off, particles (de/da/do/dos/das/e) and single letters dropped */
+  function nameTokens(name) {
+    return norm(name).replace(/[^A-Z\s]/g, ' ').split(/\s+/).filter(w => w.length >= 2 && !NAME_PARTICLES.has(w));
+  }
+  /** one token against another: equal, or one a prefix (≥ 4 letters) of the other — a truncated statement column */
+  function tokenMatch(a, b) {
+    if (a === b) return true;
+    const s = a.length <= b.length ? a : b, l = s === a ? b : a;
+    return s.length >= 4 && l.startsWith(s);
+  }
+  const CNPJ_TEXT_RE = /\d{2}\.\d{3}\.\d{3}(?:\/\d{4}-?\d{2})?/;
+  /** isOwnName(name, ownerNames) — is this counterparty the user? Tolerant: accents/case, particles, truncated tokens
+   *  (prefix ≥ 4 letters), any order of surnames; requires the FIRST name plus at least one other matching name, so a
+   *  relative sharing a surname (different first name) never matches. Companies (LTDA, S.A., CNPJ…) never match. */
+  function isOwnName(name, ownerNames) {
+    if (!name) return false;
+    const n = norm(name);
+    if (COMPANY_RE.test(n) || CNPJ_TEXT_RE.test(String(name))) return false;
+    const A = nameTokens(name);
+    if (A.length < 2) return false;
+    // every other name on the statement must be one of yours (all your variants with that first name pooled): a
+    // statement may drop or cut names, never add one — "Ana Souza Lima" is not "Ana Lima" (a sibling/cousin)
+    const pool = [];
+    for (const o of isArr(ownerNames) ? ownerNames : (ownerNames ? [ownerNames] : [])) {
+      const B = nameTokens(o);
+      if (B.length < 2 || !tokenMatch(A[0], B[0])) continue;
+      pool.push.apply(pool, B.slice(1));
+    }
+    if (!pool.length) return false;
+    return A.slice(1).every(a => pool.some(b => tokenMatch(a, b)));
+  }
+
+  /** financial institutions: text → key (also used for account names: "Mercado Pago Corrente" → mercadopago) */
+  const BANK_KEYS = [
+    ['nubank', /\bNU\s*PAGAMENTOS?\b|\bNUBANK\b|\bNU\s+FINANCEIRA\b|\bNU\s+INVEST/],
+    ['mercadopago', /\bMERCADO\s*PAGO\b/], ['wise', /\bWISE\b/], ['itau', /\bITAU\b|\bITAUCARD\b/], ['bradesco', /\bBRADESCO\b/],
+    ['santander', /\bSANTANDER\b|\bSANTAND\b/], ['caixa', /\bCAIXA\s+ECON|\bCEF\b|^CAIXA\b/], ['bb', /\bBANCO\s+DO\s+BRASIL\b|\bBCO\s+DO\s+B(?:RASIL)?\b|\bBB\b/],
+    ['inter', /\bBANCO\s+INTER\b|\bBCO\s+INTER\b|^INTER\b/], ['c6', /\bC6\b/], ['xp', /\bBANCO\s+XP\b|\bXP\s+INVEST|\bXP\b/], ['picpay', /\bPICPAY\b/],
+    ['neon', /\bNEON\b/], ['pagbank', /\bPAGSEGURO\b|\bPAGBANK\b/], ['btg', /\bBTG\b/], ['sicoob', /\bSICOOB\b/], ['sicredi', /\bSICREDI\b/],
+    ['cloudwalk', /\bCLOUDWALK\b|\bINFINITEPAY\b/], ['stone', /\bSTONE\b/], ['original', /\bBANCO\s+ORIGINAL\b/], ['safra', /\bSAFRA\b/],
+    ['banrisul', /\bBANRISUL\b/], ['will', /\bWILL\s*BANK\b/], ['iti', /^ITI\b/], ['paypal', /\bPAYPAL\b/], ['nomad', /\bNOMAD\b/], ['avenue', /\bAVENUE\b/]
+  ];
+  const BANK_LBL = { nubank: 'Nubank', mercadopago: 'Mercado Pago', wise: 'Wise', itau: 'Itaú', bradesco: 'Bradesco', santander: 'Santander', caixa: 'Caixa',
+    bb: 'Banco do Brasil', inter: 'Inter', c6: 'C6 Bank', xp: 'XP', picpay: 'PicPay', neon: 'Neon', pagbank: 'PagBank', btg: 'BTG', sicoob: 'Sicoob',
+    sicredi: 'Sicredi', cloudwalk: 'InfinitePay', stone: 'Stone', original: 'Banco Original', safra: 'Safra', banrisul: 'Banrisul', will: 'Will Bank',
+    iti: 'iti', paypal: 'PayPal', nomad: 'Nomad', avenue: 'Avenue' };
+  function bankKey(text) {
+    const s = norm(text);
+    if (!s) return null;
+    for (const [k, re] of BANK_KEYS) if (re.test(s)) return k;
+    return null;
+  }
+  /** the institution of one of the user's accounts (by its name/id, or acc.bank) */
+  function accountBank(acc) {
+    if (!acc) return null;
+    return bankKey((acc.bank || '') + ' ' + (acc.name || '') + ' ' + String(acc.id || '').replace(/[-_]+/g, ' '));
+  }
+
+  const MASKED_DOC_RE = /(?:[•*X\d]{2,3}\.){1,3}[•*X\d]{2,3}(?:[-/][•*X\d]{2,6})?(?:-[•*X\d]{2})?|\d{11,14}|[•*]{3,}[\d.\-•*]*/;
+  const CP_PATTERNS = [
+    // Nubank & co.: "Transferência enviada pelo Pix - NAME - •••.123.456-•• - BANK (0260) Agência: 1 Conta: 2"
+    [/^(TRANSFERENCIA|TRANSF|REEMBOLSO|DEVOLUCAO)\s+(ENVIADA|RECEBIDA|ENVIADO|RECEBIDO)\s*(?:PELO\s+PIX|VIA\s+PIX|POR\s+PIX)?\s*-\s*(.+)$/, 'pix', 1],
+    // "Transferência Pix enviada NAME", "Transferência recebida de NAME"
+    [/^(?:TRANSFERENCIA|TRANSF)\s+(?:PIX\s+)?(ENVIADA|RECEBIDA|ENVIADO|RECEBIDO)\s+(?:PARA|DE|P\/)?\s*(.+)$/, 'transfer', 2],
+    // "Pix enviado para NAME", "PIX RECEBIDO NAME", "Pix recebido de NAME"
+    [/^PIX\s+(ENVIADO|RECEBIDO|ENVIADA|RECEBIDA|ENV|REC|EMITIDO)\b\s*(?:\|\s*)?(?:PARA|DE|P\/|-|:)?\s*(.+)$/, 'pix', 2],
+    // Bradesco: "PIX REM: NAME", "TRANSFERENCIA PIX DES: NAME"
+    [/^(?:TRANSFERENCIA\s+)?PIX\s+(REM|DES)\s*:\s*(.+)$/, 'pix', 2],
+    // Itaú: "PIX TRANSF NAME 12/03"
+    [/^PIX\s+TRANSF(?:ERENCIA)?\s+(.+)$/, 'pix', 3],
+    // "TED recebida de NAME", "DOC ELET RECEBIDO NAME", "TEF ENVIADA PARA NAME", "TED 341.1234 NAME"
+    [/^(TED|DOC|TEF)(?:\s+ELET(?:RONIC[OA])?|\s+D)?\s+(RECEBIDA|RECEBIDO|ENVIADA|ENVIADO|EMITIDA|EMITIDO|CREDITO|DEBITO)?\s*(?:\|\s*)?(?:DE|PARA|P\/|-|:)?\s*(.+)$/, 'ted', 4],
+    // Wise (pt-BR and English)
+    [/^(RECEBEU)\s+DINHEIRO\s+DE\s+(.+)$/, 'wise', 2], [/^(ENVIOU)\s+DINHEIRO\s+PARA\s+(.+)$/, 'wise', 2],
+    [/^(RECEIVED)\s+MONEY\s+FROM\s+(.+)$/, 'wise', 2], [/^(SENT)\s+MONEY\s+TO\s+(.+)$/, 'wise', 2]
+  ];
+  function dirOf(w) {
+    w = w || '';
+    if (/RECEB|^REC$|REM|CREDITO|RECEIVED|RECEBEU/.test(w)) return 'in';
+    if (/ENVI|^ENV$|EMIT|DES|DEBITO|SENT|ENVIOU/.test(w)) return 'out';
+    return null;
+  }
+  /** counterparty(row | rawDescription) -> { name, direction: 'in'|'out'|null, bank?, bankKey?, maskedDoc?, via, company,
+   *  institution?, source: 'description'|'column' } | null.
+   *  From the description (Pix / TED / DOC / TEF / Wise / "Transferência recebida - NAME" / "Pix enviado | NAME") and, for a
+   *  row, the columns kept on import: tx.counterparty (Payer/Payee Name, Favorecido, Nome) and tx.txType (a bank's
+   *  "Transação: Pix enviado" next to a description holding only the name). */
+  function counterparty(x) {
+    if (!x || typeof x !== 'object') return counterpartyText(x);
+    const t = x;
+    let c = counterpartyText(t.rawDescription);
+    if (!c && t.txType && !norm(t.rawDescription).startsWith(norm(t.txType))) {
+      c = counterpartyText(t.txType + ' | ' + (t.rawDescription || ''));
+      if (c) c.source = 'type';
+    }
+    const col = t.counterparty ? String(t.counterparty).trim() : '';
+    if (col && /[A-Za-zÀ-ÿ]{2}/.test(col)) {
+      const n = norm(col).replace(/\s+/g, ' ').trim();
+      const company = COMPANY_RE.test(n) || CNPJ_TEXT_RE.test(col) || (!!bankKey(n) && (nameTokens(n).length <= 1 || /^(?:BANCO|BCO)\b/.test(n)));
+      const base = c || { direction: null, bank: null, bankKey: null, maskedDoc: null, via: 'column' };
+      c = Object.assign({}, base, { name: n, company: base.name && base.company && !company ? base.company : company, source: 'column' });
+      c.institution = company ? bankKey(n) : null;
+    }
+    if (c && !c.direction && t.amount) c.direction = t.amount > 0 ? 'in' : 'out';
+    return c;
+  }
+  function counterpartyText(raw) {
+    const s = norm(raw).replace(/\s+/g, ' ').trim();
+    if (!s) return null;
+    for (const [re, via, kind] of CP_PATTERNS) {
+      const m = re.exec(s);
+      if (!m) continue;
+      let dirWord, rest;
+      if (kind === 1) { dirWord = m[2]; rest = m[3]; }
+      else if (kind === 2) { dirWord = m[1]; rest = m[2]; }
+      else if (kind === 3) { dirWord = null; rest = m[1]; }
+      else { dirWord = m[2] || ''; rest = m[3]; }
+      let direction = dirOf(dirWord);
+      if (kind === 1 && /^(REEMBOLSO|DEVOLUCAO)$/.test(m[1])) direction = 'in';
+      // drop the Wise reference and quoted notes
+      rest = rest.replace(/\s+(?:COM\s+A\s+REFERENCIA|WITH\s+(?:THE\s+)?REFERENCE|REF(?:ERENCIA)?\s*:).*$/, '').replace(/\(.*$/, '');
+      const segs = rest.split(/\s+-\s+|\s*\|\s*/).map(x => x.trim()).filter(Boolean);
+      let name = '', maskedDoc = null, bank = null, company = false;
+      for (let i = 0; i < segs.length; i++) {
+        const seg = segs[i];
+        if (!name) {
+          let nm = seg;
+          // a MEI / company prefixed by its CNPJ ("12.345.678 FULANO DE TAL")
+          if (/^\d{2}\.\d{3}\.\d{3}\s/.test(nm)) { company = true; nm = nm.replace(/^\d{2}\.\d{3}\.\d{3}\s+/, ''); }
+          const dm = MASKED_DOC_RE.exec(nm);
+          if (dm && dm.index > 2) { maskedDoc = maskedDoc || dm[0]; nm = nm.slice(0, dm.index); }
+          nm = nm.replace(/\b(?:CPF|CNPJ)\b\s*:?.*$/, '').replace(/\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?(?:\s+\d{1,2}:\d{2})?\s*$/, '')
+            .replace(/[*"'“”]/g, ' ').replace(/\s+\d+\s*$/, '').replace(/^\d[\d.\s]*\s+/, '').replace(/\s+/g, ' ').trim();
+          if (/[A-Z]{2,}/.test(nm)) { name = nm; continue; }
+        }
+        if (!maskedDoc && MASKED_DOC_RE.test(seg) && !/[A-Z]{3,}/.test(seg.replace(/X/g, ''))) { maskedDoc = MASKED_DOC_RE.exec(seg)[0]; if (CNPJ_TEXT_RE.test(seg) && /\/\d{4}/.test(seg)) company = true; continue; }
+        if (name && !bank && /[A-Z]{2,}/.test(seg)) bank = seg.replace(/\s*\(\d+\).*$/, '').replace(/\s+AG(?:ENCIA)?\b.*$/, '').trim();
+      }
+      if (maskedDoc && /\/\d{4}/.test(maskedDoc)) company = true;
+      if (!name || name.length < 3) return { name: null, direction, bank: bank || null, bankKey: bank ? bankKey(bank) : null, maskedDoc, via, company };
+      if (COMPANY_RE.test(name)) company = true;
+      // the counterparty IS a bank/wallet ("Pix enviado - WISE", "BANCO INTER") — an institution, not a person
+      const ik = bankKey(name);
+      if (ik && !company && (nameTokens(name).length <= 1 || /^(?:BANCO|BCO)\b/.test(name))) company = true;
+      const bk = bank ? bankKey(bank) : null;
+      return { name, direction, bank: bank || null, bankKey: bk, maskedDoc, via, company, institution: company ? ik : null };
+    }
+    return null;
+  }
+
+  const CONVERSION_RE = /^\s*([\d.,]+)\s+([A-Z]{3})\s+CONVERTID[OA]S?\s+(?:PARA|EM)\s+([\d.,]+)\s+([A-Z]{3})\b|^\s*CONVERTED\s+([\d.,]+)\s+([A-Z]{3})\s+TO\s+([\d.,]+)\s+([A-Z]{3})\b/;
+  const CONVERSION_WORDS_RE = /\bCONVERSAO\s+(?:DE\s+)?MOEDAS?\b|\bCURRENCY\s+(?:CONVERSION|EXCHANGE)\b|\bCONVERTID[OA]S?\s+PARA\s+[A-Z]{3}\b|^CAMBIO\b(?!.*\bIOF\b)|\bCAMBIO\s+ENTRE\s+(?:CONTAS|MOEDAS)\b|\bTROCA\s+DE\s+MOEDA\b/;
+  /** "1.082,22 BRL convertidos para 200,00 USD" -> { from: {currency, amount}, to: {currency, amount} } (cents) | null */
+  const PURCHASE_RE = /\bCARD\b|\bCARTAO\b|\bCOMPRA\b|\bPURCHASE\b|\bMERCHANT\b|\bPOS\b|\bSAQUE\b|\bATM\b|\bWITHDRAWAL\b/;
+  function parseConversion(raw) {
+    const s = norm(raw);
+    const m = CONVERSION_RE.exec(s);
+    if (!m) return CONVERSION_WORDS_RE.test(s) ? {} : null;
+    const g = m[1] ? [m[1], m[2], m[3], m[4]] : [m[5], m[6], m[7], m[8]];
+    const amt = x => { const v = parseAmount(x, /,\d{2}$/.test(x) ? 'br' : (/\.\d{2}$/.test(x) ? 'us' : 'br')); return v == null ? null : Math.abs(v); };
+    return { from: { currency: g[1], amount: amt(g[0]) }, to: { currency: g[3], amount: amt(g[2]) } };
+  }
+  /** a currency exchange inside one account: the description ("X BRL convertidos para Y USD"), the Exchange From/To
+   *  columns kept on import (tx.exchange) or the bank's transaction type ("CONVERSION", "Câmbio") */
+  function conversionOf(t) {
+    if (!t) return null;
+    const d = parseConversion(t.rawDescription);
+    if (d && d.from) return d;
+    const ex = t.exchange;
+    // Exchange From/To are filled on a card purchase abroad too (paid in USD, charged in CNY): that is spending, not
+    // money moved between your balances
+    const purchase = PURCHASE_RE.test(norm((t.txType || '') + ' ' + (t.rawDescription || '')));
+    if (ex && ex.from && ex.to && ex.from !== ex.to && !purchase) {
+      const rowCur = (t.fx && t.fx.currency) || 'BRL';
+      const amt = Math.abs(t.fx && t.fx.currency === ex.from ? t.fx.amount : t.amount);
+      if (t.amount < 0 || rowCur === ex.from) return { from: { currency: ex.from, amount: amt }, to: { currency: ex.to, amount: ex.toAmount != null ? ex.toAmount : null } };
+      return { from: { currency: ex.from, amount: null }, to: { currency: ex.to, amount: amt } };
+    }
+    if (t.txType && /^(?:CONVERSION|CONVERSAO|CAMBIO|CURRENCY EXCHANGE|EXCHANGE)$/.test(norm(t.txType))) return d || {};
+    return d;
+  }
+  const TRANSFERISH_RE = /\bPIX\b|\bTED\b|\bDOC\b|\bTEF\b|TRANSF|\bDINHEIRO\b|\bMONEY\b|\bDEPOSITO\b|\bBOLETO\b|\bRESGATE\b/;
+  const INVEST_MOVE_RE = /\bDINHEIRO\s+(?:RESERVADO|RETIRADO|GUARDADO|RESGATADO)\b|\bCAIXINHAS?\b|\bCOFRINHOS?\b|\bPORQUINHOS?\b|\bAPLICACAO\b|\bAPLIC\b|\bRESGATE\b|\bRESG\b|\bRDB\b|\bCDB\b|\bLCI\b|\bLCA\b|\bTESOURO\s+DIRETO\b/;
+  function businessDays(a, b) { // weekdays strictly after a up to b (a <= b)
+    let n = 0;
+    for (let d = dayNum(a) + 1, e = dayNum(b); d <= e && n < 30; d++) { const wd = new Date(d * 86400000).getUTCDay(); if (wd !== 0 && wd !== 6) n++; }
+    return n;
+  }
+  const isManualTx = t => !!t && (t.catSource === 'manual' || t.kindSource === 'manual');
+  /** the user's own name in a bare description ("Fulano de Tal") — some extratos print only the counterparty */
+  function bareName(raw) {
+    const s = String(raw || '').trim();
+    if (!s || /\d/.test(s) || s.split(/\s+/).length > 7 || COMPANY_RE.test(norm(s))) return null;
+    return s;
+  }
+  function ownCounterparty(t, owners) {
+    if (!owners || !owners.length) return null;
+    const c = counterparty(t);
+    if (c && c.name && !c.company && isOwnName(c.name, owners)) return c;
+    if (!c) { const b = bareName(t.rawDescription); if (b && isOwnName(b, owners)) return { name: b, direction: t.amount > 0 ? 'in' : 'out', bank: null, bankKey: null, via: 'bare' }; }
+    return null;
+  }
+  const pairKey = (a, b) => 'p:' + [a, b].sort().join('|');
+  const PREV_FIELDS = ['kind', 'categoryId', 'catSource', 'linkedTo', 'transferAccountId', 'transferSubtype', 'transferSource', 'transferBank', 'cardAccountId', 'fx'];
+  const snapshot = t => { const o = {}; for (const k of PREV_FIELDS) o[k] = t[k] === undefined ? null : t[k]; return o; };
+
+  /** detectTransfers(transactions, { accounts, ownerNames, settings }) — pure.
+   *  -> { transactions (all live rows, changed ones replaced), changed: [rows], changes: [{ id, reason, prev }],
+   *       suggestions: [{ key, type: 'pair'|'institution', ids, accountId?, amount, date, score, reason }], counts: { reason: rows } }
+   *  Reasons: pair (outflow in A ↔ inflow in B, both yours: same amount or a fee ≤ R$ 5 / 1 %, 0–4 days — business days
+   *  count —, compatible counterparty; foreign amounts within 3 %), own_name (your name with no pair → "conta não
+   *  cadastrada"), conversion (currency exchange inside one account), card_payment (fatura payments; linked to the card
+   *  account when identifiable), investment (caixinha / aplicação / resgate). Only HIGH-confidence changes are applied;
+   *  the rest becomes suggestions. Rows the user set (catSource 'manual') are never flipped; settings.transferRejected
+   *  (pair keys "p:a|b", row keys "o:id") is never suggested/applied again. */
+  function detectTransfers(transactions, opts) {
+    opts = opts || {};
+    const settings = opts.settings || {};
+    const owners = (opts.ownerNames || settings.ownerNames || []).filter(Boolean);
+    const rejected = new Set(isArr(settings.transferRejected) ? settings.transferRejected : []);
+    const accounts = (isArr(opts.accounts) ? opts.accounts : Object.entries(opts.accounts || {}).map(([id, v]) => (typeof v === 'string' ? { id, type: v } : Object.assign({ id }, v)))).filter(a => a && a.id);
+    const accById = new Map(accounts.map(a => [a.id, a]));
+    const typeOf = id => (accById.get(id) || {}).type || null;
+    const bankOf = id => accountBank(accById.get(id));
+    const live = (transactions || []).filter(t => t && !t.deleted);
+    const byId = new Map(live.map(t => [t.id, t]));
+    const upd = new Map();
+    const cur = id => upd.get(id) || byId.get(id);
+    const changes = [], suggestions = [], counts = {};
+    const change = (t, patch, reason) => {
+      const base = cur(t.id);
+      const next = Object.assign({}, base, patch);
+      for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
+      if (PREV_FIELDS.every(k => JSON.stringify(next[k] === undefined ? null : next[k]) === JSON.stringify(base[k] === undefined ? null : base[k]))) return false;
+      if (!upd.has(t.id)) changes.push({ id: t.id, reason, prev: snapshot(byId.get(t.id)) });
+      else { const c = changes.find(x => x.id === t.id); if (c && reason && c.reason !== reason && /^(card_link|transfer_link)$/.test(c.reason)) c.reason = reason; }
+      upd.set(t.id, next);
+      return true;
+    };
+    const count = r => { counts[r] = (counts[r] || 0) + 1; };
+    const done = new Set();
+    const cps = new Map();
+    const cpOf = t => { if (!cps.has(t.id)) cps.set(t.id, counterparty(t)); return cps.get(t.id); };
+
+    // d. currency conversions inside one account (both legs when present)
+    for (const t of live) {
+      if (typeOf(t.accountId) === 'credit_card' || t.kind === 'card_payment') continue;
+      const cv = conversionOf(t);
+      if (!cv) continue;
+      done.add(t.id);
+      if (rejected.has('o:' + t.id)) continue;
+      if (isManualTx(t) && t.kind !== 'transfer') continue;
+      const patch = { kind: 'transfer', transferSubtype: 'conversion', transferAccountId: t.accountId, categoryId: null };
+      if (!isManualTx(t) && t.catSource === 'dictionary') patch.catSource = null;
+      if (cv.from && cv.to && cv.to.amount && !t.fx) {
+        const rowCur = cv.from.currency === 'BRL' || !t.fx ? cv.from.currency : null;
+        const other = rowCur === cv.from.currency ? cv.to : cv.from;
+        if (other.currency && other.currency !== 'BRL' && other.amount) patch.fx = { currency: other.currency, amount: (t.amount < 0 ? -1 : 1) * other.amount, rate: cv.from.amount && other === cv.to ? round2(cv.from.amount / other.amount * 10000) / 10000 : undefined, source: 'conversion' };
+        if (patch.fx && patch.fx.rate === undefined) delete patch.fx.rate;
+      }
+      const before = cur(t.id).kind;
+      if (change(t, patch, 'conversion') && before !== 'transfer') count('conversion');
+      // the other leg: same account (or another account of the same institution), ±1 day, opposite sign, itself a
+      // conversion (never a purchase that happens to cost the converted amount), holding the OTHER side's amount: the
+      // money out pairs with the "to" amount, the money in with the "from" amount
+      const want = t.amount < 0 ? cv.to : cv.from;
+      if (want && want.amount) {
+        const sameInst = o => o.accountId === t.accountId || (!!bankOf(t.accountId) && bankOf(o.accountId) === bankOf(t.accountId) && typeOf(o.accountId) !== 'credit_card');
+        const near = (x, y) => Math.abs(x - y) <= Math.max(1, y * 0.005);
+        const leg = live.find(o => {
+          if (o === t || done.has(o.id) || !sameInst(o) || Math.sign(o.amount) !== -Math.sign(t.amount) || Math.abs(dayNum(o.date) - dayNum(t.date)) > 1) return false;
+          const oc = conversionOf(o);
+          if (!oc) return false;
+          if (o.fx && o.fx.currency === want.currency) return near(Math.abs(o.fx.amount), want.amount);
+          if (want.currency === 'BRL' && !(o.fx && o.fx.currency && o.fx.currency !== 'BRL')) return near(Math.abs(o.amount), want.amount);
+          return !!oc.to && Math.abs(Math.abs(o.amount) - Math.abs(t.amount)) <= 1;
+        });
+        if (leg && !(isManualTx(leg) && leg.kind !== 'transfer')) {
+          done.add(leg.id);
+          const b2 = cur(leg.id).kind;
+          if (change(leg, { kind: 'transfer', transferSubtype: 'conversion', transferAccountId: t.accountId, categoryId: null, linkedTo: t.id }, 'conversion') && b2 !== 'transfer') count('conversion');
+          change(t, { linkedTo: leg.id, transferAccountId: leg.accountId }, 'conversion');
+        }
+      }
+    }
+
+    // c. card payments: wider wording, linked to the card account when identifiable (bank name / same institution / cycle)
+    const cards = accounts.filter(a => a.type === 'credit_card');
+    // the total of each imported fatura (its rows minus payments) and its last purchase day, per card account
+    const billTotals = [];
+    { const g = new Map(); for (const t of live) if (typeOf(t.accountId) === 'credit_card' && t.importId && t.kind !== 'card_payment') { const k = t.accountId + '|' + t.importId; const e = g.get(k) || { acc: t.accountId, total: 0, last: '' }; e.total -= t.amount; if (t.date > e.last) e.last = t.date; g.set(k, e); }
+      for (const e of g.values()) if (e.total > 0) billTotals.push(e); }
+    for (const t of live) {
+      if (done.has(t.id) || typeOf(t.accountId) === 'credit_card') continue;
+      const s = norm(t.rawDescription);
+      // a Pix/boleto to the card's issuer of EXACTLY an imported fatura's total, within 40 days after its last purchase
+      let billOf = null;
+      if (t.amount < 0 && (t.kind === 'expense' || t.kind == null) && !isManualTx(t)) {
+        const cp = cpOf(t), bk = cp && (cp.institution || (cp.company ? cp.bankKey : null));
+        if (bk) { const hit = billTotals.filter(e => e.total === -t.amount && accountBank(accById.get(e.acc)) === bk && dayNum(t.date) - dayNum(e.last) >= 0 && dayNum(t.date) - dayNum(e.last) <= 40);
+          if (hit.length === 1) billOf = hit[0].acc; }
+      }
+      const isPay = t.kind === 'card_payment' || (t.amount < 0 && CARD_PAYMENT_RE.test(s)) || !!billOf;
+      if (!isPay) continue;
+      done.add(t.id);
+      if (rejected.has('o:' + t.id)) continue;
+      const patch = {};
+      if (t.kind !== 'card_payment') { if (isManualTx(t)) continue; patch.kind = 'card_payment'; patch.categoryId = null; if (t.catSource === 'dictionary') patch.catSource = null; }
+      const linked = t.linkedTo && byId.get(t.linkedTo);
+      if (!t.cardAccountId && t.amount < 0) {
+        let cand = [];
+        if (billOf) cand = [accById.get(billOf)];
+        else if (linked && typeOf(linked.accountId) === 'credit_card') cand = [accById.get(linked.accountId)];
+        else {
+          const bk = bankKey(s);
+          if (bk) cand = cards.filter(a => accountBank(a) === bk);
+          if (!cand.length && !bk) cand = cards.filter(a => accountBank(a) && accountBank(a) === bankOf(t.accountId));
+        }
+        if (cand.length > 1) {
+          // the card whose due date is nearest to the payment (cards with closing + due day)
+          const near = cand.map(a => { let best = 99; try { for (const c of cardCycles(a, { from: addDays(t.date, -40), to: addDays(t.date, 40) })) best = Math.min(best, Math.abs(dayNum(c.dueDate) - dayNum(t.date))); } catch (e) { /* not configured */ } return { a, best }; }).sort((x, y) => x.best - y.best);
+          cand = near[0].best <= 12 && (near.length < 2 || near[1].best > near[0].best) ? [near[0].a] : [];
+        }
+        if (cand.length === 1) patch.cardAccountId = cand[0].id;
+      }
+      if (Object.keys(patch).length && change(t, patch, patch.kind ? 'card_payment' : 'card_link') && patch.kind) count('card_payment');
+    }
+
+    // e. investment moves inside one institution (caixinha, aplicação, resgate) — never income/expense
+    for (const t of live) {
+      if (done.has(t.id) || typeOf(t.accountId) === 'credit_card' || isManualTx(t)) continue;
+      if (t.kind !== 'income' && t.kind !== 'expense') continue;
+      const s = norm(t.rawDescription);
+      if (!INVEST_MOVE_RE.test(s) || REND_RE.test(s) || REFUND_ANY_RE.test(s)) continue;
+      if (rejected.has('o:' + t.id)) continue;
+      done.add(t.id);
+      const patch = { kind: 'investment' };
+      if (!t.categoryId || t.catSource === 'dictionary' || kindForCategory(t.categoryId) !== 'investment') { patch.categoryId = 'investimentos.aplicacoes'; patch.catSource = 'dictionary'; }
+      if (change(t, patch, 'investment')) count('investment');
+    }
+
+    // a. pairs across the user's accounts
+    const pairable = t => {
+      if (done.has(t.id) || !t.date || !t.amount) return false;
+      const ty = typeOf(t.accountId);
+      if (ty === 'credit_card' || ty === 'payslip' || ty === 'benefit') return false;
+      if (t.payslip || t.transferSubtype === 'conversion') return false;
+      if (t.kind !== 'income' && t.kind !== 'expense' && t.kind !== 'transfer') return false;
+      if (isManualTx(t) && t.kind !== 'transfer') return false;
+      if (t.linkedTo) { const o = byId.get(t.linkedTo); if (o && !(o.kind === 'transfer' && o.linkedTo === t.id)) return false; }
+      if (rejected.has('o:' + t.id)) return false;
+      return true;
+    };
+    const foreign = t => !!((t.fx && t.fx.currency && t.fx.currency !== 'BRL') || ((accById.get(t.accountId) || {}).currency && accById.get(t.accountId).currency !== 'BRL'));
+    const outs = live.filter(t => t.amount < 0 && pairable(t)), ins = live.filter(t => t.amount > 0 && pairable(t));
+    const insByAcc = new Map();
+    for (const i of ins) { if (!insByAcc.has(i.accountId)) insByAcc.set(i.accountId, []); insByAcc.get(i.accountId).push(i); }
+    const cands = [];
+    const side = (c, own, otherAccId, otherCp) => {
+      // how this side's counterparty fits a move to/from the other account: own | mutual | bank | generic | third
+      if (!c) return 'generic';
+      if (!c.name) return c.bankKey && c.bankKey === bankOf(otherAccId) ? 'bank' : 'generic';
+      if (c.institution) return c.institution === bankOf(otherAccId) ? 'bank' : 'third';
+      if (own) return 'own';
+      if (otherCp && otherCp.name && !c.company && !otherCp.company && (isOwnName(c.name, [otherCp.name]) || isOwnName(otherCp.name, [c.name]))) {
+        // both sides name the same person: you (money between your accounts) — or a friend you paid who paid you back. With
+        // your names known, a name that is not yours is a third party; without them it needs the same amount, 0–2 days
+        if (owners.length) return 'third';
+        return 'mutual';
+      }
+      if (c.company) return 'third';
+      if (c.bankKey && c.bankKey === bankOf(otherAccId) && !owners.length) return 'bank';
+      return 'third';
+    };
+    for (const o of outs) {
+      const co = cpOf(o), ownO = !!ownCounterparty(o, owners);
+      for (const [acc, list] of insByAcc) {
+        if (acc === o.accountId) continue;
+        for (const i of list) {
+          const dd = dayNum(i.date) - dayNum(o.date);
+          if (dd < -1 || dd > 6) continue;
+          if (dd > 4 && businessDays(o.date, i.date) > 4) continue;
+          const a = -o.amount, b = i.amount;
+          const fx = foreign(o) || foreign(i);
+          let amtOK, exact;
+          if (o.fx && i.fx && o.fx.currency === i.fx.currency && o.fx.currency !== 'BRL') { const fa = Math.abs(o.fx.amount), fb = Math.abs(i.fx.amount); exact = Math.abs(fa - fb) <= 1; amtOK = Math.abs(fa - fb) <= Math.max(1, fa * 0.01); }
+          else if (fx) { exact = Math.abs(a - b) <= 1; amtOK = Math.abs(a - b) <= a * 0.03; }
+          else { exact = Math.abs(a - b) <= 1; amtOK = a - b >= -1 && a - b <= Math.max(500, Math.round(a * 0.01)); }
+          if (!amtOK) continue;
+          const ci = cpOf(i), ownI = !!ownCounterparty(i, owners);
+          const so = side(co, ownO, i.accountId, ci), si = side(ci, ownI, o.accountId, co);
+          if (so === 'third' || si === 'third') continue;
+          if (rejected.has(pairKey(o.id, i.id))) continue;
+          const mutualOK = so === 'mutual' && exact && dd >= 0 && dd <= 2;
+          const strong = so === 'own' || si === 'own' || mutualOK || so === 'bank' || si === 'bank';
+          const tish = TRANSFERISH_RE.test(norm(o.rawDescription)) && TRANSFERISH_RE.test(norm(i.rawDescription));
+          if (!strong && !(tish && exact) && so !== 'mutual') continue;
+          const already = o.linkedTo === i.id && i.linkedTo === o.id;
+          const score = (exact ? 0.4 : 0.3) + Math.max(0, 0.3 - 0.06 * Math.abs(dd)) + (so === 'own' || si === 'own' || mutualOK ? 0.4 : strong ? 0.3 : 0) + (tish ? 0.05 : 0) + (already ? 1 : 0);
+          cands.push({ o, i, score, high: strong || already, dd, exact });
+        }
+      }
+    }
+    cands.sort((x, y) => y.score - x.score || x.dd - y.dd);
+    const used = new Set();
+    const pairs = [];
+    for (const c of cands) {
+      if (used.has(c.o.id) || used.has(c.i.id)) continue;
+      const rivals = cands.filter(r => r !== c && !used.has(r.o.id) && !used.has(r.i.id) && (r.o === c.o || r.i === c.i) && r.score >= c.score - 0.05);
+      if (!c.high || rivals.length) {
+        // medium confidence or ambiguous: a suggestion (each row suggested once, best first)
+        if (!suggestions.some(s => s.ids.includes(c.o.id) || s.ids.includes(c.i.id))) {
+          suggestions.push({ key: pairKey(c.o.id, c.i.id), type: 'pair', ids: [c.o.id, c.i.id], from: c.o.accountId, to: c.i.accountId, amount: -c.o.amount, date: c.o.date, score: round2(c.score),
+            reason: rivals.length ? 'Há mais de um lançamento parecido — confirme qual é o par.' : 'Mesmo valor e datas próximas, mas o extrato não diz para quem foi.' });
+        }
+        continue;
+      }
+      used.add(c.o.id); used.add(c.i.id);
+      pairs.push([c.o.id, c.i.id]);
+      for (const [t, other] of [[c.o, c.i], [c.i, c.o]]) {
+        const patch = { kind: 'transfer', linkedTo: other.id, transferAccountId: other.accountId, categoryId: null, transferBank: undefined };
+        if (!isManualTx(t)) { patch.transferSource = t.transferSource === 'user' ? 'user' : 'auto'; if (t.catSource === 'dictionary' || t.catSource === 'learned' || t.catSource === 'rule') patch.catSource = null; }
+        const before = cur(t.id).kind;
+        if (change(t, patch, before === 'transfer' ? 'transfer_link' : 'pair') && before !== 'transfer') count('pair');
+      }
+    }
+    for (const s of suggestions.slice()) if (s.ids.some(id => used.has(id))) suggestions.splice(suggestions.indexOf(s), 1);
+
+    // b. your own name, no pair: a transfer to/from an account that is not in the app
+    for (const t of live) {
+      if (used.has(t.id) || done.has(t.id)) continue;
+      if (t.kind !== 'income' && t.kind !== 'expense' && t.kind !== 'transfer') continue;
+      if (typeOf(t.accountId) === 'payslip' || t.payslip) continue;
+      if (t.linkedTo && byId.get(t.linkedTo)) continue;
+      const c = ownCounterparty(t, owners);
+      if (!c) continue;
+      if (rejected.has('o:' + t.id)) continue;
+      if (isManualTx(t)) continue; // the user decided; the app asks before touching these ("Aplicar a N lançamentos?")
+      const bk = c.bankKey || null;
+      // your name at a bank where you HAVE an account in the app (its statement just does not cover that day): that
+      // account, not "Conta não cadastrada"
+      const there = bk ? accounts.filter(a => a.id !== t.accountId && a.type !== 'credit_card' && a.type !== 'payslip' && accountBank(a) === bk) : [];
+      const patch = there.length === 1 ? { kind: 'transfer', transferAccountId: there[0].id, categoryId: null, transferSource: 'auto', transferBank: undefined }
+        : { kind: 'transfer', transferAccountId: 'external', categoryId: null, transferSource: 'auto', transferBank: bk || undefined };
+      if (t.catSource === 'dictionary' || t.catSource === 'learned' || t.catSource === 'rule') patch.catSource = null;
+      const before = cur(t.id).kind;
+      if (change(t, patch, 'own_name') && before !== 'transfer') count('own_name');
+    }
+
+    // an institution of one of your accounts as the counterparty, unpaired ("Pix para MERCADO PAGO IP LTDA"): ask
+    for (const t of live) {
+      if (used.has(t.id) || done.has(t.id) || (t.kind !== 'expense' && t.kind !== 'income') || isManualTx(t)) continue;
+      if (typeOf(t.accountId) === 'credit_card') continue;
+      const c = cpOf(t);
+      if (!c || !c.institution || rejected.has('o:' + t.id)) continue;
+      const acc = accounts.find(a => a.id !== t.accountId && a.type !== 'credit_card' && accountBank(a) === c.institution);
+      if (!acc) continue;
+      suggestions.push({ key: 'o:' + t.id, type: 'institution', ids: [t.id], to: t.amount < 0 ? acc.id : t.accountId, from: t.amount < 0 ? t.accountId : acc.id, accountId: acc.id, amount: Math.abs(t.amount), date: t.date, score: 0.5,
+        reason: (t.amount < 0 ? 'Enviado para ' : 'Recebido de ') + (BANK_LBL[c.institution] || c.name) + ', onde você tem a conta ' + (acc.name || acc.id) + '.' });
+    }
+    // a row patched and patched back (a conversion leg found from the other side) is not a change
+    const same = (c) => { const u = upd.get(c.id); return PREV_FIELDS.every(k => JSON.stringify(u[k] === undefined ? null : u[k]) === JSON.stringify(c.prev[k])); };
+    for (let k = changes.length - 1; k >= 0; k--) if (same(changes[k])) { upd.delete(changes[k].id); changes.splice(k, 1); }
+    const changed = changes.map(c => upd.get(c.id));
+    const transactionsOut = live.map(t => upd.get(t.id) || t);
+    suggestions.sort((a, b) => b.date.localeCompare(a.date));
+    return { transactions: transactionsOut, changed, changes, suggestions, counts, pairs };
+  }
+
+  /** applyTransferChanges(transactions, changes) — restores the fields saved in changes[].prev ("Desfazer revisão").
+   *  -> rows to save (only the ones still present) */
+  function undoTransferChanges(transactions, changes) {
+    const byId = new Map((transactions || []).filter(t => t && !t.deleted).map(t => [t.id, t]));
+    const out = [];
+    for (const c of changes || []) {
+      const t = byId.get(c.id);
+      if (!t || !c.prev) continue;
+      const u = Object.assign({}, t);
+      for (const k of PREV_FIELDS) { const v = c.prev[k]; if (v === null || v === undefined) delete u[k]; else u[k] = v; }
+      out.push(u);
+    }
+    return out;
+  }
+
+  /** ownerNameCandidates(transactions, { accounts, imports, ownerNames, settings }) — names that look like the user:
+   *  counterparties of Pix/TED/Wise in both directions, across accounts, sharing first name + a surname (variants of one
+   *  person are grouped), plus the holder printed on PDF statements ("Olá, Fulano"). Never applied without the user.
+   *  -> [{ key, name, variants: [name], count, in, out, accounts, banks, holder, score, suggested }] best first */
+  function ownerNameCandidates(transactions, opts) {
+    opts = opts || {};
+    const settings = opts.settings || {};
+    const known = (opts.ownerNames || settings.ownerNames || []).filter(Boolean);
+    const dismissed = new Set(isArr(settings.ownerNamesDismissed) ? settings.ownerNamesDismissed : []);
+    const holders = [];
+    for (const r of Object.values(opts.imports || {})) if (r && r.holderName) holders.push(r.holderName);
+    const names = new Map();
+    for (const t of (transactions || [])) {
+      if (!t || t.deleted || t.kind === 'card_payment') continue;
+      let c = counterparty(t);
+      // a bare name ("Fulano de Tal") only counts when the user already called it a transfer
+      if (!c) { const b = bareName(t.rawDescription); if (b && nameTokens(b).length >= 2 && t.kind === 'transfer') c = { name: b, direction: t.amount > 0 ? 'in' : 'out', bare: true }; else continue; }
+      if (!c.name || c.company || nameTokens(c.name).length < 2) continue;
+      const k = nameTokens(c.name).join(' ');
+      const e = names.get(k) || { name: c.name, n: 0, in: 0, out: 0, accounts: new Set(), banks: new Set(), transfers: 0, bare: 0 };
+      e.n++; e[(c.direction || (t.amount > 0 ? 'in' : 'out')) === 'in' ? 'in' : 'out']++; if (!c.bare) e.accounts.add(t.accountId);
+      if (c.bankKey) e.banks.add(c.bankKey);
+      if (t.kind === 'transfer' && (t.catSource === 'manual' || t.transferSource === 'user' || (t.linkedTo && t.transferSubtype !== 'conversion'))) e.transfers++;
+      if (c.bare) e.bare++;
+      names.set(k, e);
+    }
+    // group variants of one person (first name + one more name in common)
+    const groups = [];
+    for (const [k, e] of [...names.entries()].sort((a, b) => b[1].n - a[1].n)) {
+      const g = groups.find(x => x.members.some(m => isOwnName(m.name, [e.name]) || isOwnName(e.name, [m.name])));
+      if (g) g.members.push(e); else groups.push({ members: [e] });
+    }
+    const out = [];
+    for (const g of groups) {
+      const m = g.members;
+      const tot = f => m.reduce((s, e) => s + e[f], 0);
+      const accs = new Set(), banks = new Set();
+      m.forEach(e => { e.accounts.forEach(a => accs.add(a)); e.banks.forEach(b => banks.add(b)); });
+      const holder = holders.some(h => { const ht = nameTokens(h); return ht.length >= 2 ? m.some(e => isOwnName(e.name, [h])) : (ht.length === 1 && m.some(e => tokenMatch(nameTokens(e.name)[0], ht[0]))); });
+      const n = tot('n'), nin = tot('in'), nout = tot('out');
+      let score = 0;
+      if (nin && nout) score += 2;
+      if (accs.size >= 2) score += 2;
+      if (m.length >= 2) score += 1;
+      if (tot('transfers')) score += 2;
+      if (holder) score += 5;
+      if (n >= 3) score += 1;
+      if (score < 3 || n < 2) continue;
+      const variants = m.map(e => titleName(e.name));
+      const key = 'n:' + hashStr(nameTokens(m[0].name).join(' '));
+      if (dismissed.has(key)) continue;
+      if (known.length && m.every(e => isOwnName(e.name, known))) continue; // already confirmed
+      out.push({ key, name: variants[0], variants: [...new Set(variants)], count: n, in: nin, out: nout, accounts: accs.size, banks: [...banks], holder, score,
+        suggested: holder || tot('transfers') >= 1, both: accs.size >= 2 && nin > 0 && nout > 0 });
+    }
+    out.sort((a, b) => b.score - a.score || b.count - a.count);
+    // pre-ticked (never saved without "Confirmar"): the holder / names you already marked as transfers; else only the clear
+    // leader that moves money both ways across two accounts
+    if (!out.some(c => c.suggested) && out.length && out[0].both && (out.length < 2 || out[0].score > out[1].score)) out[0].suggested = true;
+    out.forEach(c => { delete c.both; });
+    return out.slice(0, 6);
+  }
+  function titleName(s) {
+    return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim().replace(/(^|\s)(\S)/g, (x, sp, ch) => sp + ch.toUpperCase())
+      .replace(/\s(De|Da|Do|Dos|Das|E)(?=\s)/g, (x, w) => ' ' + w.toLowerCase());
+  }
+
+  /** transferOverview(transactions, { accounts, ownerNames, from, to }) — what the "Transferências" sheet shows for a period:
+   *  { total (money moved between your accounts, outflow side), pairs: [{ out, in, from, to, amount }], external: [{ key, label,
+   *    out, in, rows }], conversions: [rows], flows: [{ from, to, amount, count }], unmatched: [rows] } */
+  function transferOverview(transactions, opts) {
+    opts = opts || {};
+    const accounts = opts.accounts || [];
+    const accById = new Map(accounts.map(a => [a.id, a]));
+    const owners = (opts.ownerNames || []).filter(Boolean);
+    const inR = rangeFilter(opts.from, opts.to);
+    const all = (transactions || []).filter(t => t && !t.deleted);
+    const byId = new Map(all.map(t => [t.id, t]));
+    const list = all.filter(t => inR(t) && t.kind === 'transfer');
+    const pairs = [], ext = new Map(), conversions = [], flows = new Map(), unmatched = [];
+    const seen = new Set();
+    let total = 0;
+    for (const t of list.sort((a, b) => b.date.localeCompare(a.date))) {
+      if (seen.has(t.id)) continue;
+      if (t.transferSubtype === 'conversion') { conversions.push(t); seen.add(t.id); if (t.linkedTo) seen.add(t.linkedTo); continue; }
+      const o = t.linkedTo && byId.get(t.linkedTo);
+      if (o && o.kind === 'transfer' && o.accountId !== t.accountId) {
+        seen.add(t.id); seen.add(o.id);
+        const out = t.amount < 0 ? t : o, inn = t.amount < 0 ? o : t;
+        pairs.push({ out, in: inn, from: out.accountId, to: inn.accountId, amount: -out.amount, date: out.date });
+        total += -out.amount;
+        const k = out.accountId + '>' + inn.accountId; const f = flows.get(k) || { from: out.accountId, to: inn.accountId, amount: 0, count: 0 }; f.amount += -out.amount; f.count++; flows.set(k, f);
+        continue;
+      }
+      seen.add(t.id);
+      const c = counterparty(t);
+      const bk = t.transferBank || (c && (c.institution || c.bankKey)) || null;
+      const tracked = t.transferAccountId && t.transferAccountId !== 'external' && accById.get(t.transferAccountId);
+      const key = tracked ? 'acc:' + tracked.id : bk ? 'bank:' + bk : 'none';
+      const label = tracked ? (tracked.name || tracked.id) : bk ? (BANK_LBL[bk] || bk) : 'Banco não identificado';
+      const e = ext.get(key) || { key, label, bank: bk, accountId: tracked ? tracked.id : null, out: 0, in: 0, rows: [], own: 0 };
+      if (t.amount < 0) e.out += -t.amount; else e.in += t.amount;
+      e.rows.push(t);
+      if (c && c.name && owners.length && isOwnName(c.name, owners)) e.own++;
+      ext.set(key, e);
+      total += Math.abs(t.amount);
+      unmatched.push(t);
+    }
+    return { total, pairs, external: [...ext.values()].sort((a, b) => (b.out + b.in) - (a.out + a.in)), conversions, flows: [...flows.values()].sort((a, b) => b.amount - a.amount), unmatched,
+      count: list.length };
+  }
+
+  /** a rule learned when the user marks a row as a transfer between own accounts ("Lembrar"): counterparty → transfer.
+   *  -> { rules, created } (no rule when the row has no named counterparty) */
+  function learnTransferRule(tx, rules, opts) {
+    opts = opts || {};
+    rules = (rules || []).slice();
+    const c = counterparty(tx);
+    const name = c && c.name ? c.name : (bareName(tx.rawDescription) && nameTokens(tx.rawDescription).length >= 2 ? norm(tx.rawDescription) : null);
+    if (!name || name.length < 4) return { rules, created: null };
+    const value = norm(name);
+    const id = 'learned_tr_' + hashStr(value);
+    const ex = rules.find(r => r.id === id);
+    if (ex) return { rules, created: null, existing: ex };
+    const created = { id, match: { field: 'rawDescription', op: 'contains', value }, set: { kind: 'transfer', categoryId: null }, origin: 'learned', transfer: true,
+      transferAccountId: opts.transferAccountId || undefined, priority: 1, hits: 0, updatedAt: opts.now || new Date().toISOString() };
+    if (!created.transferAccountId) delete created.transferAccountId;
+    rules.push(created);
+    return { rules, created };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Files: kind by content + name, ZIP archives (a bank's "download all" often comes zipped)
+  // ---------------------------------------------------------------------------
+  function bytesHas(b, s, limit) {
+    const n = Math.min(b.length, limit || b.length), c0 = s.charCodeAt(0);
+    outer: for (let i = 0; i + s.length <= n; i++) {
+      if (b[i] !== c0) continue;
+      for (let k = 1; k < s.length; k++) if (b[i + k] !== s.charCodeAt(k)) continue outer;
+      return true;
+    }
+    return false;
+  }
+  /** 'pdf' | 'xlsx' | 'zip' | 'text' | pt-BR error message. A ZIP holding a workbook ([Content_Types].xml / xl/) is a
+   *  spreadsheet; any other ZIP is an archive of statements (whatever its name says, e.g. "x.pdf.zip"). */
+  function fileKindOf(name, bytes) {
+    const n = String(name || '').toLowerCase(); const ext = (/\.([a-z0-9]{1,5})$/.exec(n) || [])[1] || '';
+    const b = bytes || new Uint8Array(0);
+    const zip = b[0] === 0x50 && b[1] === 0x4b; const ole = b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0;
+    if (zip) return ext !== 'zip' && (bytesHas(b, '[Content_Types].xml') || bytesHas(b, 'xl/')) ? 'xlsx' : 'zip';
+    if (ext === 'zip') return 'zip';
+    if (['xlsx', 'xls'].includes(ext) || ole) return 'xlsx';
+    if ((b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) || ext === 'pdf') return 'pdf';
+    if (['csv', 'txt', 'tsv'].includes(ext)) return 'text';
+    const head = Array.from(b.subarray ? b.subarray(0, 2048) : b.slice(0, 2048)); const bin = head.filter(c => c === 0 || (c < 9) || (c > 13 && c < 32 && c !== 27)).length;
+    if (head.length && bin / head.length < 0.02) return 'text';
+    return 'este tipo de arquivo não é aceito (use PDF, CSV, TXT, TSV, XLSX, XLS ou ZIP)';
+  }
+  const ZIP_STATEMENT_RE = /\.(csv|txt|tsv|xlsx|xls|pdf|ofx)$/i;
+  /** unzipEntries(bytes, { inflate(rawDeflate) → Uint8Array | Promise }) → [{ name, bytes }] — statement files inside a
+   *  ZIP (central directory; stored or deflated entries; folders, hidden files and __MACOSX left out; nested folders
+   *  flattened to the base name). Throws { code: 'zip_invalid' | 'zip_encrypted' | 'zip_method' }. */
+  async function unzipEntries(bytes, opts) {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const u16 = i => b[i] | (b[i + 1] << 8), u32 = i => (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16)) + b[i + 3] * 16777216;
+    const fail = code => { const e = new Error(code); e.code = code; return e; };
+    let eocd = -1;
+    for (let i = b.length - 22; i >= Math.max(0, b.length - 65557); i--) if (u32(i) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) throw fail('zip_invalid');
+    const count = u16(eocd + 10); let p = u32(eocd + 16);
+    const out = [];
+    for (let k = 0; k < count; k++) {
+      if (p + 46 > b.length || u32(p) !== 0x02014b50) throw fail('zip_invalid');
+      const flags = u16(p + 8), method = u16(p + 10), csize = u32(p + 20), nlen = u16(p + 28), xlen = u16(p + 30), clen = u16(p + 32), lho = u32(p + 42);
+      const nameBytes = b.subarray(p + 46, p + 46 + nlen);
+      const name = (flags & 0x800) ? decodeUtf8Strict(nameBytes, 0) || decodeCp1252(nameBytes, 0) : (decodeUtf8Strict(nameBytes, 0) || decodeCp1252(nameBytes, 0));
+      p += 46 + nlen + xlen + clen;
+      const base = name.split('/').pop();
+      if (!base || /(^|\/)__MACOSX\//.test(name) || base.charAt(0) === '.' || !ZIP_STATEMENT_RE.test(base)) continue;
+      if (flags & 1) throw fail('zip_encrypted');
+      if (u32(lho) !== 0x04034b50) throw fail('zip_invalid');
+      const start = lho + 30 + u16(lho + 26) + u16(lho + 28);
+      const raw = b.subarray(start, start + csize);
+      let data;
+      if (method === 0) data = raw.slice();
+      else if (method === 8) { if (!opts || !opts.inflate) throw fail('zip_method'); data = await opts.inflate(raw); }
+      else throw fail('zip_method');
+      out.push({ name: base, bytes: data instanceof Uint8Array ? data : new Uint8Array(data) });
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
   const FinEngine = {
-    version: '2.4.1',
+    version: '2.5.0',
     decodeBytes, analyzeTable, analyzeRows, profileFromAnalysis, applyProfile, matchProfile,
     parseAmount, detectNumberFormat, parseDate, normalizeDescription,
     DEFAULT_CATEGORIES, DEFAULT_DICTIONARY,
@@ -4766,7 +5747,11 @@
     // v2.4a
     selectForDeletion, applyDeletion, dataIntegrity,
     // v2.4b — PDF + foreign currencies
+    fileKindOf, unzipEntries,
     readPdf, pdfLines, analyzePdf, pdfChecksum, currencyOf, parseRate, formatFx, fxRateFor, applyFxRates, linkFxIof, fxSummary, walletCategory, ISO_CODES,
+    // v2.5 — transfers between own accounts
+    isOwnName, nameTokens, counterparty, bankKey, accountBank, BANK_LBL, parseConversion, detectTransfers, undoTransferChanges, ownerNameCandidates,
+    transferOverview, learnTransferRule, titleName, conversionOf, adoptInfoColumns, importHolder, holderFromPreamble, INFO_ROLES,
     lookupDictionaryEntry: (d, m, r, a) => lookupDictionaryEntry(d || DEFAULT_DICTIONARY, m, r, a),
     // extras (helpers, stable but not part of the contract)
     _internal: { parseDelimited, detectDelimiter, detectDateFormat, norm, stripAccents, hashStr, SKIP_PATTERNS, parseInstallmentText, detectKind }

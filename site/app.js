@@ -16,12 +16,15 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const MES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const MES3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const KIND_LBL = { expense: 'Saída', income: 'Entrada', transfer: 'Transferência', card_payment: 'Pagamento de fatura', investment: 'Investimento' };
+/* v2.5: the "Tipo" choices in the editor, in plain pt-BR */
+const EDIT_KIND_LBL = [['expense', 'Gasto'], ['income', 'Entrada'], ['transfer', 'Transferência entre minhas contas'], ['card_payment', 'Pagamento de fatura'], ['investment', 'Investimento']];
+const TR_REASON_LBL = { pair: 'pares entre suas contas', own_name: 'em seu nome (conta fora do app)', conversion: 'conversões de moeda', card_payment: 'pagamentos de fatura', investment: 'movimentos de investimento', card_link: 'faturas ligadas ao cartão', transfer_link: 'transferências ligadas ao par' };
 const TYPE_FILTER_LBL = { expense: 'Gasto', income: 'Entrada', transfer: 'Transferência', card_payment: 'Pagamento de fatura', investment: 'Investimento' };
 const SRC_LBL = { rule: 'regra', learned: 'aprendido', dictionary: 'dicionário', ai: 'IA', manual: 'manual', series: 'lembrado p/ esta compra', wallet: 'pela carteira' };
 const SRC_FILTER = [['rule', 'Regra'], ['learned', 'Aprendido'], ['series', 'Compra parcelada lembrada'], ['dictionary', 'Dicionário'], ['wallet', 'Carteira do benefício'], ['manual', 'Manual'], ['none', 'Sem categoria']];
 const ACC_TYPES = { credit_card: 'Cartão de crédito', checking: 'Conta corrente', savings: 'Poupança', benefit: 'Benefício (VA/VR)', cash: 'Dinheiro', payslip: 'Holerite' };
 const NEW_ACC_TYPES = ['credit_card', 'checking', 'savings', 'benefit', 'cash'];
-const ROLE_LBL = { ignore: 'Ignorar', date: 'Data', time: 'Hora', description: 'Descrição', amount: 'Valor em R$', fxAmount: 'Valor (moeda estrangeira)', fxCurrency: 'Moeda', fxRate: 'Cotação', debit: 'Débito', credit: 'Crédito', dcFlag: 'Indicador D/C', installment: 'Parcela', balance: 'Saldo (ignorar)', tag: 'Carteira', section: 'Seção', detail: 'Detalhe' };
+const ROLE_LBL = { ignore: 'Ignorar', date: 'Data', time: 'Hora', description: 'Descrição', amount: 'Valor em R$', fxAmount: 'Valor (moeda estrangeira)', fxCurrency: 'Moeda', fxRate: 'Cotação', debit: 'Débito', credit: 'Crédito', dcFlag: 'Indicador D/C', installment: 'Parcela', balance: 'Saldo (ignorar)', tag: 'Carteira', section: 'Seção', detail: 'Detalhe', payer: 'Quem pagou', payee: 'Quem recebeu', counterparty: 'Nome (de/para)', txType: 'Tipo de transação', fxFrom: 'Câmbio: de', fxTo: 'Câmbio: para', fxToAmount: 'Câmbio: valor convertido', holder: 'Titular' };
 const SIGN_LBL = { negative_is_expense: 'Negativos = gasto', positive_is_expense: 'Compras positivas = gasto', dc_flag: 'Coluna D/C', split_columns: 'Débito e crédito separados' };
 const SORTS = [['date_desc', 'Data (padrão, mais recentes)'], ['date_asc', 'Data (antigas primeiro)'], ['amt_desc', 'Maior valor'], ['amt_asc', 'Menor valor'], ['merchant', 'Estabelecimento A–Z'], ['category', 'Categoria']];
 const PALETTE = ['#4F7DF3', '#F2994A', '#9B6BF2', '#2BB3C0', '#E25D7B', '#E8B931', '#C86DD7', '#6C8EAD', '#C08457', '#3BA99C', '#D9534F', '#5B8C3A'];
@@ -97,7 +100,7 @@ const centsToInput = c => c == null ? '' : (c / 100).toLocaleString('pt-BR', { m
 function emptyData() {
   let cats = [];
   try { cats = clone(E.DEFAULT_CATEGORIES || []); } catch (e) { reportErr('Categorias padrão indisponíveis.'); }
-  return { categories: cats, rules: [], history: [], profiles: [], accounts: [], settings: { budgets: {}, schemaVersion: 2 }, imports: {}, txs: [] };
+  return { categories: cats, rules: [], history: [], profiles: [], accounts: [], settings: { budgets: {}, schemaVersion: (E && E.SCHEMA_VERSION) || 3 }, imports: {}, txs: [] };
 }
 const S = {
   mode: 'example',        // example | real
@@ -142,7 +145,7 @@ function catLabel(catId) {
 }
 function accName(id) { const a = (D().accounts || []).find(a => a.id === id); return a ? a.name : id; }
 function accType(id) { const a = (D().accounts || []).find(a => a.id === id); return a ? a.type : null; }
-function ctx() { return { rules: D().rules || [], dictionary: (E && E.DEFAULT_DICTIONARY) || [], categories: D().categories, accounts: D().accounts || [] }; }
+function ctx() { const st = D().settings || {}; return { rules: D().rules || [], dictionary: (E && E.DEFAULT_DICTIONARY) || [], categories: D().categories, accounts: D().accounts || [], settings: st, ownerNames: st.ownerNames || [] }; }
 const countable = t => t.kind !== 'card_payment' && t.kind !== 'transfer';
 /** v2.4b: a row with a foreign amount — or the IOF tied to one */
 const isFxRow = t => !!(t.fx && t.fx.currency && t.fx.currency !== 'BRL') || !!(t.linkedTo && /\bIOF\b/i.test(t.rawDescription || '') && (() => { const o = txById(t.linkedTo); return o && o.fx; })());
@@ -356,7 +359,8 @@ async function loadFromStore(reason) {
     if (r.kinds) bits.push(r.kinds + ' tipo' + (r.kinds > 1 ? 's' : '') + ' corrigido' + (r.kinds > 1 ? 's' : ''));
     if (r.recategorized) bits.push(r.recategorized + ' recategorizado' + (r.recategorized > 1 ? 's' : ''));
     if (r.rulesCreated) bits.push(r.rulesCreated + ' regra' + (r.rulesCreated > 1 ? 's' : '') + ' aprendida' + (r.rulesCreated > 1 ? 's' : ''));
-    if (bits.length) toast('Dados atualizados para a v2: ' + bits.join(' · '));
+    if (bits.length) toast('Dados atualizados: ' + bits.join(' · ') + (r.transferChanges ? ' · ' + r.transferChanges + ' transferência' + (r.transferChanges > 1 ? 's' : '') + ' revisada' + (r.transferChanges > 1 ? 's' : '') : ''), false, r.transferChanges ? { label: 'Ver', fn: () => openTransfersSheet() } : null);
+    else if (r.transferChanges) toast('Revisão de transferências: ' + r.transferChanges + ' lançamento' + (r.transferChanges > 1 ? 's' : '') + ' ajustado' + (r.transferChanges > 1 ? 's' : '') + '.', false, { label: 'Ver', fn: () => openTransfersSheet() });
   }
   return { migrated: m };
 }
@@ -523,7 +527,8 @@ function renderPainel() {
       <div class="kpi" role="listitem"><span class="eyebrow">Saldo</span><span class="v money ${net < 0 ? 'out' : ''}" id="kpi-net" data-cents="${net}">${brl(net)}</span></div>
       <div class="kpi" role="listitem"><span class="eyebrow">Taxa de poupança</span><span class="v num ${rate != null && rate < 0 ? 'out' : ''}">${rate == null ? '—' : (rate * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%'}</span></div>
     </div>
-    <div class="pn-sum" id="pn-sum">${healthChipHTML()}${carryLineHTML()}${fxLineHTML(p)}</div>
+    <div class="pn-sum" id="pn-sum">${healthChipHTML()}${carryLineHTML()}${fxLineHTML(p)}${trPainelHTML()}</div>
+    ${whoCardVisible() ? whoCardHTML('painel') : ''}
     <div class="card" id="sankey-card">
       <div class="card-h">
         <h2>Para onde foi o dinheiro</h2>
@@ -533,6 +538,7 @@ function renderPainel() {
         </div>
       </div>
       <div class="sankey-wrap" id="sankey-wrap"></div>
+      ${S.ui.view === 'account' ? skFlowsHTML() : ''}
       <div class="row" style="justify-content:space-between">
         <span class="sk-hint">Toque num bloco para ver os lançamentos.</span>
         ${S.ui.view === 'category' || narrow ? `<button class="btn ghost sm" type="button" data-act="full">${S.ui.full ? 'Resumir em 3 colunas' : (S.ui.view === 'category' ? 'Detalhar subcategorias' : 'Detalhar por grupo')}</button>` : ''}
@@ -778,6 +784,7 @@ function refreshOpenSheet(){
   else if(S.sheet.kind==='month') renderMonthMenu();
   else if(S.sheet.kind==='alerts') renderAlertsSheet();
   else if(S.sheet.kind==='manage') renderManageSheet();
+  else if(S.sheet.kind==='transfers') renderTransfersSheet();
   else if(S.sheet.kind==='settings'){ const el = $('#carry-set'); if(el) el.innerHTML = carrySettingsHTML(); }
 }
 function warningById(id){ return health().find(w=>w.id===id) || null; }
@@ -825,8 +832,12 @@ function healthAction(id){
     if(a.accountId && (D().accounts||[]).some(x=>x.id===a.accountId)) S.imp.accountId = a.accountId;
     setTab('import');
   } else if(a.type==='owner-name'){
-    updateSettings(st=>{ st.ownerNames = (st.ownerNames||[]).filter(n=>n!==a.name).concat([a.name]); });
-    toast('Nome salvo: transferências em seu nome agora são reconhecidas.');
+    updateSettings(st=>{ st.ownerNames = (st.ownerNames||[]).filter(n=>n!==a.name).concat([a.name]); st.ownerNamesAsked = true; });
+    // nothing else changes until the user says so
+    const dt = trDetect(); const n = dt.changed.length;
+    toast('Nome salvo: transferências em seu nome agora são reconhecidas.', false, n ? { label: 'Aplicar a ' + n + ' lançamento' + (n>1?'s':''), ms: 9000, fn: () => trApplyPending() } : null);
+  } else if(a.type==='transfers'){
+    closeSheet(); openTransfersSheet();
   } else if(a.type==='mark-transfer'){
     const ids = new Set(a.txIds||[]);
     const ch = live().filter(t=>ids.has(t.id)).map(t=>Object.assign({}, t, { kind:'transfer', categoryId:null, catSource:'manual' }));
@@ -1099,6 +1110,238 @@ function alInput(t) {
 }
 
 /* ---------- budget ---------- */
+/* ---------- v2.5: transfers between your own accounts ("Transferências"), "Quem é você nos extratos?" ---------- */
+const ownerNames = () => (settingsObj().ownerNames || []).filter(Boolean);
+_memo.tr = { key: null, v: null }; _memo.who = { key: null, v: null };
+function trKey() { const st = settingsObj(); return memoKey() + '|' + JSON.stringify([st.ownerNames || [], (st.transferRejected || []).length, st.ownerNamesDismissed || []]); }
+/** detectTransfers on the current data (suggestions + the high-confidence changes not applied yet), memoized */
+function trDetect() {
+  const k = trKey();
+  if (_memo.tr.key === k) return _memo.tr.v;
+  const d = D();
+  const v = eng('detectTransfers', live(), { accounts: d.accounts || [], settings: d.settings || {} }) || { suggestions: [], changes: [], changed: [], counts: {} };
+  _memo.tr = { key: k, v };
+  return v;
+}
+function whoCandidates() {
+  const k = trKey();
+  if (_memo.who.key === k) return _memo.who.v;
+  const d = D();
+  const v = eng('ownerNameCandidates', live(), { accounts: d.accounts || [], imports: d.imports || {}, settings: d.settings || {} }) || [];
+  _memo.who = { key: k, v };
+  return v;
+}
+function trOverview(p) {
+  p = p || period();
+  return eng('transferOverview', live(), { accounts: D().accounts || [], ownerNames: ownerNames(), from: p.from, to: p.to }) || { total: 0, pairs: [], external: [], conversions: [], flows: [], unmatched: [] };
+}
+/** show the first-run card: real data, no names yet, not dismissed, something to propose */
+function whoCardVisible() { return S.mode === 'real' && !ownerNames().length && !settingsObj().ownerNamesAsked && whoCandidates().length > 0; }
+function whoCardHTML(where) {
+  const cands = whoCandidates();
+  const U = S.trUI || {};
+  const sel = U.who || null;
+  return `<div class="who-card card" id="who-${where}" data-who-where="${where}">
+    <div><span class="eyebrow">Transferências</span><h2 style="margin:2px 0 4px">Quem é você nos extratos?</h2>
+    <p class="small muted">Marque os nomes que são <b>você</b> (outra conta sua). Pix e transferências em seu nome deixam de contar como entrada ou gasto. Nada muda antes de você confirmar.</p></div>
+    <div class="who-list">${cands.map(c => { const on = sel ? sel.includes(c.key) : c.suggested; return `<label class="who-opt"><input type="checkbox" data-who="${esc(c.key)}" ${on ? 'checked' : ''}><span class="grow"><b>${esc(c.name)}</b>${c.variants.length > 1 ? `<span class="xs muted"> · também ${esc(c.variants.slice(1).join(', '))}</span>` : ''}<br><span class="xs muted">${c.count} Pix/TED${c.in && c.out ? ' de e para' : c.in ? ' recebidos' : ' enviados'} · ${c.accounts} conta${c.accounts === 1 ? '' : 's'}${c.holder ? ' · nome no extrato em PDF' : ''}</span></span></label>`; }).join('')}</div>
+    <div class="row"><button class="btn sm primary" type="button" data-act="who-confirm" data-where="${where}" id="who-confirm-${where}">Confirmar</button><button class="btn sm ghost" type="button" data-act="who-later" id="who-later-${where}">Agora não</button></div></div>`;
+}
+function whoSelected(where) {
+  const root = $('#who-' + where); if (!root) return [];
+  return $$('[data-who]', root).filter(i => i.checked).map(i => i.dataset.who);
+}
+/** saves names (synced settings), then applies the high-confidence changes they bring; asks before touching rows the
+ *  user set by hand ("Aplicar a N lançamentos?") */
+function applyOwnerNames(names, opts) {
+  opts = opts || {};
+  const before = ownerNames();
+  const all = [...new Set(before.concat(names.map(n => String(n).trim()).filter(Boolean)))];
+  const st = settingsObj();
+  st.ownerNames = all; st.ownerNamesAsked = true; st.updatedAt = nowISO();
+  P.meta.add('settings');
+  const d = D();
+  const dt = eng('detectTransfers', live(), { accounts: d.accounts || [], settings: st }) || { changed: [], changes: [] };
+  const prev = (dt.changes || []).map(c => Object.assign({}, txById(c.id)));
+  if (dt.changed && dt.changed.length) commit({ txs: dt.changed, meta: ['settings'] }); else commit({ meta: ['settings'] });
+  // rows you set by hand with your own name that are not transfers: ask
+  const manual = live().filter(t => t.catSource === 'manual' && t.kind !== 'transfer' && t.kind !== 'card_payment' && (() => { const c = E.counterparty(t); return c && c.name && !c.company && E.isOwnName(c.name, all); })());
+  S.trUI = Object.assign(S.trUI || {}, { askManual: manual.map(t => t.id), who: null });
+  const n = (dt.changed || []).length;
+  toast(n ? n + ' lançamento' + (n > 1 ? 's' : '') + ' em seu nome agora ' + (n > 1 ? 'são transferências' : 'é transferência') + '.' : 'Nome salvo.', false, n ? { label: 'Desfazer', fn: () => {
+    commit({ txs: prev.map(x => clone(x)) });
+    updateSettings(s2 => { s2.ownerNames = before; s2.transferRejected = [...new Set((s2.transferRejected || []).concat(prev.map(x => 'o:' + x.id)))].slice(-3000); });
+    toast('Desfeito');
+  } } : null);
+  refreshOpenSheet(); if (S.ui.tab === 'painel' && !S.sheet) renderPainel();
+}
+function applyManualOwn() {
+  const ids = new Set((S.trUI && S.trUI.askManual) || []);
+  const rows = live().filter(t => ids.has(t.id));
+  const prev = rows.map(t => clone(t));
+  commit({ txs: rows.map(t => Object.assign({}, t, { kind: 'transfer', categoryId: null, catSource: 'manual', transferAccountId: t.transferAccountId || 'external', transferSource: 'user' })) });
+  S.trUI.askManual = [];
+  toast(rows.length + ' lançamento' + (rows.length > 1 ? 's' : '') + ' marcado' + (rows.length > 1 ? 's' : '') + ' como transferência.', false, { label: 'Desfazer', fn: () => { commit({ txs: prev }); toast('Desfeito'); } });
+  refreshOpenSheet();
+}
+/** "Por conta/cartão": money moved between your accounts, listed under the flow (thin links would clutter it) */
+function skFlowsHTML() {
+  if (S.mode !== 'real' && !live().some(t => t.kind === 'transfer')) return '';
+  const ov = trOverview();
+  if (!ov.flows.length && !ov.external.length) return '';
+  const ext = ov.external.filter(g => g.out > 0);
+  return `<div class="sk-flows" id="sk-flows"><span class="lbl">Entre suas contas <span class="xs muted">(não entra no fluxo)</span></span>${ov.flows.map(f => `<div class="tr-flow"><span class="grow">${esc(accName(f.from))} → ${esc(accName(f.to))}</span><span class="money">${brl(f.amount)}</span></div>`).join('')}${ext.map(g => `<div class="tr-flow"><span class="grow">→ ${esc(g.label)}${g.accountId ? '' : ' <span class="xs muted">(fora do app)</span>'}</span><span class="money">${brl(g.out)}</span></div>`).join('')}</div>`;
+}
+function trPainelHTML() {
+  if (S.mode !== 'real') return '';
+  const ov = trOverview();
+  const sug = trDetect().suggestions.length + (trDetect().changed.length ? 1 : 0);
+  if (!ov.total && !sug && !ov.conversions.length) return '';
+  return `<button type="button" class="pn-fx pn-tr" id="pn-tr" data-act="transfers"><span>Entre suas contas: <b class="money" id="pn-tr-total" data-cents="${ov.total}">${brl(ov.total)}</b>${sug ? ` <span class="tag acc" id="pn-tr-sug">${sug} para revisar</span>` : ''}</span><span class="xs faint">fora de entradas e gastos</span></button>`;
+}
+function openTransfersSheet() {
+  S.trUI = Object.assign({ who: null, askManual: [], addName: '' }, S.trUI || {});
+  openSheet(`<span class="eyebrow">${esc(periodLabel())}</span><h2>Transferências</h2>`, '<div id="tr-body"></div>', null, { kind: 'transfers', label: 'Transferências' });
+  renderTransfersSheet();
+}
+const trRow = (t, extra) => `<div class="tr-row" data-tx="${esc(t.id)}"><span class="grow"><span class="small"><b>${esc(accName(t.accountId))}</b> · ${esc(isoToDM(t.date))}</span><br><span class="xs muted tr-desc">${esc(t.rawDescription)}</span></span><span class="money ${t.amount > 0 ? 'in' : ''}">${t.amount > 0 ? '+' : ''}${brl(t.amount)}</span>${extra || ''}</div>`;
+function renderTransfersSheet() {
+  const el = $('#tr-body'); if (!el) return;
+  const U = S.trUI || {};
+  const st = settingsObj();
+  const ov = trOverview();
+  const dt = trDetect();
+  const names = ownerNames();
+  const rv = st.transferReview;
+  const accLbl = id => id === 'external' ? 'Conta não cadastrada' : accName(id);
+  const flows = ov.flows.length ? `<div class="tr-flows">${ov.flows.map(f => `<div class="tr-flow"><span class="grow">${esc(accName(f.from))} → ${esc(accName(f.to))}${f.count > 1 ? ` <span class="xs muted">(${f.count})</span>` : ''}</span><span class="money">${brl(f.amount)}</span></div>`).join('')}</div>` : '';
+  const sugHTML = dt.suggestions.map(sg => {
+    const rows = sg.ids.map(id => txById(id)).filter(Boolean);
+    return `<div class="hw sev-info tr-sug" data-key="${esc(sg.key)}"><b class="hw-t">${sg.type === 'pair' ? esc(accName(sg.from)) + ' → ' + esc(accName(sg.to)) + ' · ' + brl(sg.amount) : 'Para sua conta ' + esc(accName(sg.accountId)) + '?'}</b>
+      <p class="xs muted">${esc(sg.reason)}</p>${rows.map(t => trRow(t)).join('')}
+      <div class="row"><button class="btn sm primary" type="button" data-act="tr-confirm" data-key="${esc(sg.key)}">Confirmar</button><button class="btn sm ghost" type="button" data-act="tr-reject" data-key="${esc(sg.key)}">Não é transferência</button></div></div>`;
+  }).join('');
+  const pend = dt.changed.length;
+  const rvCounts = rv && rv.rows ? Object.entries(rv.rows).filter(([, n]) => n > 0) : [];
+  el.innerHTML = `
+    <div class="tr-total-box" id="tr-sum"><span class="small">Entre suas contas ${S.ui.range === 1 ? 'este mês' : 'no período'}:</span> <b class="money" id="tr-total" data-cents="${ov.total}">${brl(ov.total)}</b>
+      <p class="xs muted">Dinheiro que só mudou de lugar: de uma conta sua para outra (também as que não estão no app). Não conta como entrada nem como gasto — conversões de moeda e pagamentos de fatura também ficam de fora.</p>${flows}</div>
+    ${!names.length && whoCandidates().length ? whoCardHTML('sheet') : ''}
+    <div class="field" id="tr-names"><span class="lbl">Seus nomes nos extratos</span>
+      ${names.length ? `<div class="row">${names.map(n => `<span class="tag acc tr-name">${esc(n)}<button type="button" class="x" data-act="tr-name-del" data-name="${esc(n)}" aria-label="Remover ${esc(n)}">×</button></span>`).join('')}</div>` : '<p class="xs muted">Nenhum ainda. Com o seu nome, Pix em seu nome viram transferência sozinhos.</p>'}
+      <div class="row"><input type="text" id="tr-name-new" placeholder="Seu nome como aparece no extrato" value="${esc(U.addName || '')}" style="flex:1 1 200px;min-width:0"><button class="btn sm" type="button" data-act="tr-name-add" id="tr-name-add">Adicionar</button></div></div>
+    ${(U.askManual || []).length ? `<div class="banner" id="tr-ask-manual"><div class="grow"><b>Aplicar a ${U.askManual.length} lançamento${U.askManual.length > 1 ? 's' : ''}?</b> Você classificou ${U.askManual.length > 1 ? 'estes' : 'este'} à mão, mas ${U.askManual.length > 1 ? 'são' : 'é'} em seu nome. Virar transferência?</div><button class="btn sm primary" type="button" data-act="tr-apply-manual" id="tr-apply-manual">Aplicar</button><button class="btn sm ghost" type="button" data-act="tr-skip-manual">Não</button></div>` : ''}
+    ${pend ? `<div class="banner" id="tr-pending"><div class="grow"><b>${pend} ajuste${pend > 1 ? 's' : ''} automático${pend > 1 ? 's' : ''} encontrado${pend > 1 ? 's' : ''}</b> (${esc(Object.entries(dt.changes.reduce((o, c) => (o[c.reason] = (o[c.reason] || 0) + 1, o), {})).map(([r, n]) => n + ' ' + (TR_REASON_LBL[r] || r)).join(', '))}).</div><button class="btn sm primary" type="button" data-act="tr-apply-pending" id="tr-apply-pending">Aplicar</button></div>` : ''}
+    ${dt.suggestions.length ? `<h3>Para confirmar (${dt.suggestions.length})</h3><div class="tr-list" id="tr-sugs">${sugHTML}</div>` : ''}
+    <h3>Entre suas contas</h3>
+    ${ov.pairs.length ? `<div class="tr-list" id="tr-pairs">${ov.pairs.map(p => `<div class="tr-pair" data-out="${esc(p.out.id)}"><div class="row" style="justify-content:space-between"><b class="small">${esc(accName(p.from))} → ${esc(accName(p.to))}</b><span class="money">${brl(p.amount)}</span></div><span class="xs muted">${esc(isoToDM(p.out.date))}${p.in.date !== p.out.date ? ' → ' + esc(isoToDM(p.in.date)) : ''}${p.in.amount !== p.amount ? ' · chegou ' + esc(brl(p.in.amount)) : ''}</span></div>`).join('')}</div>` : `<p class="small muted" id="tr-pairs-empty">Nenhum par neste período.</p>`}
+    ${ov.external.length ? `<h3>Para contas fora do app</h3><div class="tr-list" id="tr-ext">${ov.external.map(g => `<details class="tr-ext" data-key="${esc(g.key)}"><summary><span class="grow"><b>${esc(g.label)}</b>${g.accountId ? '' : ' <span class="xs muted">· conta não cadastrada</span>'}<br><span class="xs muted">${g.rows.length} lançamento${g.rows.length > 1 ? 's' : ''}${g.out ? ' · saiu ' + esc(brl(g.out)) : ''}${g.in ? ' · entrou ' + esc(brl(g.in)) : ''}</span></span></summary>${g.rows.map(t => trRow(t)).join('')}${g.accountId ? '' : `<div class="row"><button class="btn sm" type="button" data-act="goto" data-tab="import">Importar essa conta</button></div>`}</details>`).join('')}</div>` : ''}
+    ${ov.conversions.length ? `<h3>Conversões de moeda</h3><div class="tr-list" id="tr-conv">${ov.conversions.map(t => trRow(t)).join('')}</div>` : ''}
+    ${rv && rvCounts.length ? `<div class="hw sev-info" id="tr-review"><b class="hw-t">Revisão de transferências${rv.undone ? ' (desfeita)' : ''}</b><p class="xs muted">Em ${esc(isoToBR(String(rv.at || '').slice(0, 10)))}, ao atualizar o app: ${esc(rvCounts.map(([r, n]) => n + ' ' + (TR_REASON_LBL[r] || r)).join(', '))}.</p>${rv.undone ? '' : '<div class="row"><button class="btn sm" type="button" data-act="tr-review-undo" id="tr-review-undo">Desfazer revisão</button></div>'}</div>` : ''}`;
+}
+function trConfirm(key) {
+  const sg = trDetect().suggestions.find(x => x.key === key); if (!sg) return;
+  const rows = sg.ids.map(id => txById(id)).filter(Boolean);
+  const prev = rows.map(t => clone(t));
+  let upd;
+  if (sg.type === 'pair' && rows.length === 2) {
+    const [a, b] = rows;
+    upd = [Object.assign({}, a, { kind: 'transfer', categoryId: null, catSource: 'manual', transferSource: 'user', linkedTo: b.id, transferAccountId: b.accountId }),
+      Object.assign({}, b, { kind: 'transfer', categoryId: null, catSource: 'manual', transferSource: 'user', linkedTo: a.id, transferAccountId: a.accountId })];
+  } else upd = rows.map(t => Object.assign({}, t, { kind: 'transfer', categoryId: null, catSource: 'manual', transferSource: 'user', transferAccountId: sg.accountId || 'external' }));
+  commit({ txs: upd });
+  toast('Transferência confirmada.', false, { label: 'Desfazer', fn: () => { commit({ txs: prev }); toast('Desfeito'); } });
+}
+function trReject(key) {
+  updateSettings(st => { st.transferRejected = [...new Set((st.transferRejected || []).concat([key]))].slice(-3000); });
+  toast('Ok, não é transferência.', false, { label: 'Desfazer', fn: () => { updateSettings(st => { st.transferRejected = (st.transferRejected || []).filter(k => k !== key); }); toast('Desfeito'); } });
+}
+function trApplyPending() {
+  const dt = trDetect();
+  const prev = dt.changes.map(c => clone(txById(c.id))).filter(Boolean);
+  commit({ txs: dt.changed });
+  toast(dt.changed.length + ' ajuste' + (dt.changed.length > 1 ? 's' : '') + ' aplicado' + (dt.changed.length > 1 ? 's' : '') + '.', false, { label: 'Desfazer', fn: () => {
+    commit({ txs: prev });
+    updateSettings(st => { st.transferRejected = [...new Set((st.transferRejected || []).concat(prev.map(t => 'o:' + t.id)))].slice(-3000); });
+    toast('Desfeito');
+  } });
+}
+/** "Desfazer revisão": the kinds/links from before the v2.5 review come back (rows you edited since are left alone) */
+function trReviewUndo() {
+  const rv = settingsObj().transferReview; if (!rv || rv.undone) return;
+  const at = String(rv.at || '');
+  const changes = (rv.changes || []).filter(c => { const t = txById(c.id); return t && !(t.catSource === 'manual' && String(t.updatedAt || '') > at); });
+  const rows = eng('undoTransferChanges', live(), changes) || [];
+  commit({ txs: rows, render: false });
+  updateSettings(st => {
+    st.transferReview = Object.assign({}, st.transferReview, { undone: nowISO() });
+    st.transferRejected = [...new Set((st.transferRejected || []).concat(changes.map(c => 'o:' + c.id)))].slice(-3000);
+  });
+  toast('Revisão desfeita: ' + rows.length + ' lançamento' + (rows.length === 1 ? '' : 's') + ' como antes.');
+}
+
+/* --- editor: "Transferência entre minhas contas" (other account + optional counterpart row) and "Pagamento de fatura" --- */
+/** rows that could be the other side of t: another account, opposite sign, amount within 5 % (or R$ 5), ±7 days */
+function transferCandidates(t, accId) {
+  const a = Math.abs(t.amount);
+  return live().filter(o => o.id !== t.id && o.accountId !== t.accountId && (!accId || accId === 'external' ? true : o.accountId === accId) && Math.sign(o.amount) === -Math.sign(t.amount) &&
+    o.kind !== 'card_payment' && Math.abs(Math.abs(o.amount) - a) <= Math.max(500, a * 0.05) && Math.abs((new Date(o.date) - new Date(t.date)) / 864e5) <= 7 && (!o.linkedTo || o.linkedTo === t.id))
+    .sort((x, y) => Math.abs(Math.abs(x.amount) - a) - Math.abs(Math.abs(y.amount) - a) || Math.abs(new Date(x.date) - new Date(t.date)) - Math.abs(new Date(y.date) - new Date(t.date))).slice(0, 6);
+}
+function edPairHTML(t, accId, sel) {
+  if (accId === 'external') return '<p class="xs muted">Uma conta sua que não está no app. Fica fora de entradas e gastos.</p>';
+  const c = transferCandidates(t, accId || null);
+  if (!c.length) return '<p class="xs muted" id="ed-tr-none">Nenhum lançamento parecido nas outras contas (±7 dias). Tudo bem: fica como transferência mesmo assim.</p>';
+  const cur = sel === undefined ? (t.linkedTo && c.some(o => o.id === t.linkedTo) ? t.linkedTo : '') : sel;
+  return `<span class="lbl">Qual é o outro lado? <span class="xs muted">(opcional)</span></span><div class="tr-cands">${c.map(o => `<label class="who-opt"><input type="radio" name="ed-tr-pair" value="${esc(o.id)}" ${cur === o.id ? 'checked' : ''}><span class="grow small">${esc(accName(o.accountId))} · ${esc(isoToDM(o.date))}<br><span class="xs muted tr-desc">${esc(o.rawDescription)}</span></span><span class="money ${o.amount > 0 ? 'in' : ''}">${brl(o.amount)}</span></label>`).join('')}<label class="who-opt"><input type="radio" name="ed-tr-pair" value="" ${!cur ? 'checked' : ''}><span class="small">Nenhum destes</span></label></div>`;
+}
+function edTransferHTML(t) {
+  const accs = (D().accounts || []).filter(a => a.id !== t.accountId && a.type !== 'payslip' && a.type !== 'credit_card');
+  const linked = t.linkedTo && txById(t.linkedTo);
+  const cur = t.transferAccountId || (linked ? linked.accountId : '') || '';
+  const cand0 = !cur ? transferCandidates(t)[0] : null;
+  const pre = cur || (cand0 ? cand0.accountId : '');
+  const c = E.counterparty ? E.counterparty(t) : null;
+  const cards = (D().accounts || []).filter(a => a.type === 'credit_card' && a.id !== t.accountId);
+  return `<div class="field ed-sub" id="ed-tr" ${t.kind === 'transfer' ? '' : 'hidden'}><label for="ed-tr-acc">${t.amount < 0 ? 'Para qual conta sua?' : 'De qual conta sua?'}</label>
+      <select id="ed-tr-acc"><option value="" ${!pre ? 'selected' : ''}>Escolha…</option>${accs.map(a => `<option value="${esc(a.id)}" ${pre === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}<option value="external" ${pre === 'external' ? 'selected' : ''}>Conta não cadastrada</option></select>
+      <div id="ed-tr-pairs">${pre ? edPairHTML(t, pre) : ''}</div>
+      ${c && c.name && !c.company ? `<label class="remember small" for="ed-tr-remember"><input type="checkbox" id="ed-tr-remember"><span>Lembrar: lançamentos com <b>${esc(E.titleName ? E.titleName(c.name) : c.name)}</b> são transferências minhas</span></label>` : ''}</div>
+    <div class="field ed-sub" id="ed-cp" ${t.kind === 'card_payment' ? '' : 'hidden'}><label for="ed-card">Qual cartão?</label><select id="ed-card"><option value="">Não sei / outro</option>${cards.map(a => `<option value="${esc(a.id)}" ${(t.cardAccountId || (linked && linked.accountId)) === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>`;
+}
+/** marks t as a transfer between your accounts; links the chosen counterpart (and unlinks an old one). -> previous rows */
+function setTransfer(t, accId, pairId, remember) {
+  const before = [clone(t)];
+  const upd = Object.assign({}, t, { kind: 'transfer', categoryId: null, catSource: 'manual', transferSource: 'user', transferAccountId: accId || 'external' });
+  delete upd.transferSubtype;
+  const changed = [upd];
+  const old = t.linkedTo && t.linkedTo !== pairId ? txById(t.linkedTo) : null;
+  if (old && old.linkedTo === t.id) { before.push(clone(old)); const o2 = Object.assign({}, old); delete o2.linkedTo; if (o2.transferAccountId === t.accountId) delete o2.transferAccountId; changed.push(o2); }
+  if (pairId) {
+    const o = txById(pairId);
+    if (o) { before.push(clone(o)); upd.linkedTo = o.id; upd.transferAccountId = o.accountId; changed.push(Object.assign({}, o, { kind: 'transfer', categoryId: null, catSource: 'manual', transferSource: 'user', linkedTo: t.id, transferAccountId: t.accountId })); }
+  } else if (t.linkedTo && old) delete upd.linkedTo;
+  const d = D(); let rulesPrev = null, n = 0;
+  if (remember) {
+    const r = eng('learnTransferRule', t, d.rules, { now: nowISO(), transferAccountId: accId && accId !== 'external' ? accId : undefined });
+    if (r && r.created) {
+      rulesPrev = clone(d.rules || []); d.rules = r.rules;
+      // the same counterparty's other rows that are not manual follow the rule
+      const val = r.created.match.value;
+      for (const o of live()) {
+        if (o.id === t.id || changed.some(x => x.id === o.id) || o.catSource === 'manual' || o.kind === 'transfer' || o.kind === 'card_payment') continue;
+        if (normU(o.rawDescription).indexOf(val) < 0) continue;
+        before.push(clone(o)); n++;
+        changed.push(Object.assign({}, o, { kind: 'transfer', categoryId: null, catSource: 'learned', transferAccountId: o.accountId === accId ? 'external' : (accId || 'external') }));
+      }
+    }
+  }
+  commit({ txs: changed, meta: rulesPrev ? ['rules'] : [] });
+  return { txs: before, rules: rulesPrev, n };
+}
+function undoRecord(res) {
+  return () => { const d = D(); const meta = []; if (res.rules) { d.rules = res.rules; meta.push('rules'); } commit({ txs: (res.txs || []).map(x => clone(x)), meta }); toast('Desfeito'); };
+}
 function renderBudget(sum){
   const el = $('#budget-card'); const budgets = D().settings.budgets || {};
   const groups = (D().categories||[]).filter(g=>g.kind!=='income');
@@ -1903,7 +2146,8 @@ function openTxEditor(id) {
   const body = `
     <div class="field cat-picker"><label for="ed-cat">Categoria</label>${catSelect('ed-cat', t.categoryId, { allowNone: true })}${newCatForm('ed', { kind: t.amount > 0 ? 'income' : 'expense' })}</div>
     <label class="remember" for="ed-remember"><input type="checkbox" id="ed-remember" ${rememberDefault(t, t.categoryId) ? 'checked' : ''}><span>Lembrar esta categoria para <b>${esc(t.merchant || t.rawDescription)}</b><br><span class="xs muted">Cria uma regra e categoriza os outros lançamentos desse estabelecimento que estão sem categoria ou vieram do dicionário. Desmarque para mudar só este.</span></span></label>
-    <div class="field"><label for="ed-kind">Tipo</label><select id="ed-kind">${Object.entries(KIND_LBL).map(([k, v]) => `<option value="${k}" ${t.kind === k ? 'selected' : ''}>${v}</option>`).join('')}</select><span class="xs muted">O tipo acompanha a categoria (Renda → entrada, Investimentos → investimento, demais → gasto; valores positivos em gastos são estornos).</span></div>
+    <div class="field"><label for="ed-kind">Tipo</label><select id="ed-kind">${EDIT_KIND_LBL.map(([k, v]) => `<option value="${k}" ${t.kind === k ? 'selected' : ''}>${v}</option>`).join('')}</select><span class="xs muted">O tipo acompanha a categoria (Renda → entrada, Investimentos → investimento, demais → gasto; valores positivos em gastos são estornos). Transferência entre suas contas e pagamento de fatura não contam como entrada nem gasto.</span></div>
+    ${edTransferHTML(t)}
     <div class="field"><label for="ed-note">Observação</label><input type="text" id="ed-note" value="${esc(t.note || '')}" placeholder="Opcional"></div>
     ${(() => { const sn = seriesNote(t); return sn ? `<p class="xs muted" id="ed-series">Lembrado para esta compra (parcelas ${sn.from}–${sn.to}): ${esc(catLabel(sn.rule.set.categoryId))}.</p>` : ''; })()}
     ${t.amount < 0 && countable(t) ? `<details class="help-d" ${isUncat(t) ? 'open' : ''}><summary>Não sabe o que é? Pesquise</summary>${lookupHelpHTML(t, 'ed')}</details>` : ''}
@@ -1978,6 +2222,34 @@ function saveTxEdit(id) {
   const kind = ($('#ed-kind') || {}).value || t.kind;
   const note = (($('#ed-note') || {}).value || '').trim();
   const remember = !!($('#ed-remember') || {}).checked;
+  // v2.5: a transfer between your accounts — the other account, the counterpart row, "Lembrar" for the counterparty
+  if (kind === 'transfer') {
+    const accId = ($('#ed-tr-acc') || {}).value || '';
+    if (!accId) { toast('Escolha a outra conta (ou "Conta não cadastrada").', true); const s0 = $('#ed-tr-acc'); if (s0) s0.focus(); return false; }
+    const pr = document.querySelector('input[name="ed-tr-pair"]:checked');
+    const res = setTransfer(Object.assign({}, t, note ? { note } : {}), accId, pr && pr.value ? pr.value : null, !!($('#ed-tr-remember') || {}).checked);
+    const other = pr && pr.value ? txById(pr.value) : null;
+    toast('Transferência ' + (t.amount < 0 ? 'para ' : 'de ') + (accId === 'external' ? 'conta não cadastrada' : accName(accId)) + (other ? ' · par ligado' : '') + (res.n ? ' · +' + res.n + ' pela regra' : ''), false, { label: 'Desfazer', fn: undoRecord(res) });
+    return true;
+  }
+  if (kind === 'card_payment') {
+    const card = ($('#ed-card') || {}).value || '';
+    const before = clone(t);
+    const upd = Object.assign({}, t, { kind: 'card_payment', categoryId: null, catSource: 'manual' });
+    if (card) upd.cardAccountId = card; else delete upd.cardAccountId;
+    if (note) upd.note = note; else delete upd.note;
+    commit({ txs: [upd] });
+    toast('Pagamento de fatura' + (card ? ' · ' + accName(card) : ''), false, { label: 'Desfazer', fn: () => { commit({ txs: [before] }); toast('Desfeito'); } });
+    return true;
+  }
+  // leaving "transfer": the row stops pointing at its pair (and the pair at it)
+  if (t.kind === 'transfer' && kind !== 'transfer' && (t.linkedTo || t.transferAccountId)) {
+    const o = t.linkedTo && txById(t.linkedTo);
+    if (o && o.linkedTo === t.id) { const o2 = Object.assign({}, o); delete o2.linkedTo; commit({ txs: [o2], render: false }); }
+    const t2 = Object.assign({}, t, { kindSource: 'manual' }); ['linkedTo', 'transferAccountId', 'transferSubtype', 'transferSource', 'transferBank'].forEach(k => delete t2[k]);
+    commit({ txs: [t2], render: false });
+    return saveTxEdit(id);
+  }
   const changedCat = cat !== (t.categoryId || null);
   let res = null;
   if (changedCat && cat) noteRememberChoice(cat, remember, rememberDefault(t, cat));
@@ -1986,6 +2258,7 @@ function saveTxEdit(id) {
     const upd = Object.assign({}, t, { kind });
     if (note) upd.note = note; else delete upd.note;
     if (kind !== t.kind && !upd.categoryId) upd.catSource = 'manual';
+    if (kind !== t.kind) upd.kindSource = 'manual'; // v2.5: the automatic transfer detection never flips it back
     commit({ txs: [upd] });
   }
   const bits = ['Salvo'];
@@ -1997,11 +2270,11 @@ function saveTxEdit(id) {
 }
 
 /* ================= TRIAGEM ================= */
-const TRI = { queue: [], idx: 0, done: 0, total: 0, start: 0, timer: null, streak: 0, group: null, undo: [], newCat: false, remember: true, touched: false };
+const TRI = { queue: [], idx: 0, done: 0, total: 0, start: 0, timer: null, streak: 0, group: null, undo: [], newCat: false, remember: true, touched: false, trPick: false };
 function startTriage() {
   const q = live().filter(isUncat).sort((a, b) => b.date.localeCompare(a.date));
   if (!q.length) { toast('Nada para classificar.'); return; }
-  Object.assign(TRI, { queue: q.map(t => t.id), idx: 0, done: 0, total: q.length, start: Date.now(), streak: 0, group: null, undo: [], newCat: false, remember: true, touched: false });
+  Object.assign(TRI, { queue: q.map(t => t.id), idx: 0, done: 0, total: q.length, start: Date.now(), streak: 0, group: null, undo: [], newCat: false, remember: true, touched: false, trPick: false });
   closeSheet(); renderTriage();
   clearInterval(TRI.timer); TRI.timer = setInterval(tickTriage, 1000);
   document.body.style.overflow = 'hidden';
@@ -2057,7 +2330,14 @@ function renderTriage(timeUp) {
   const sugs = (eng('suggestCategories', t, Object.assign(ctx(), { transactions: live() })) || []).filter(s => catIndex()[s.categoryId]).slice(0, 4);
   const amb = eng('ambiguousMatch', t, ctx());
   let choices;
-  if (TRI.newCat) {
+  if (TRI.trPick) {
+    // v2.5 "É transferência minha": which other account? (a likely counterpart row is shown and linked)
+    const accs = (D().accounts || []).filter(a => a.id !== t.accountId && a.type !== 'payslip' && a.type !== 'credit_card');
+    const cands = transferCandidates(t);
+    choices = `<div class="row"><button class="btn ghost sm" type="button" data-act="tri-tr-back">‹ Voltar</button><b>${t.amount < 0 ? 'Para qual conta sua?' : 'De qual conta sua?'}</b></div><div class="tri-grid" id="tri-tr-accs">
+      ${accs.map(a => { const c = cands.find(o => o.accountId === a.id); return `<button type="button" class="tri-btn sub" data-act="tri-tr-acc" data-acc="${esc(a.id)}"${c ? ` data-pair="${esc(c.id)}"` : ''}><span class="sw" style="background:var(--accent)"></span><span>${esc(a.name)}${c ? `<br><span class="xs muted">par: ${esc(isoToDM(c.date))} · ${esc(brl(c.amount))}</span>` : ''}</span></button>`; }).join('')}
+      <button type="button" class="tri-btn sub" data-act="tri-tr-acc" data-acc="external" id="tri-tr-ext"><span class="sw" style="background:var(--line-2)"></span>Conta não cadastrada</button></div>`;
+  } else if (TRI.newCat) {
     choices = newCatForm('tri', { open: true, kind: t.amount > 0 ? 'income' : 'expense' });
   } else if (TRI.group) {
     const g = (D().categories || []).find(x => x.id === TRI.group);
@@ -2080,7 +2360,7 @@ function renderTriage(timeUp) {
       <label class="remember small" for="tri-remember"><input type="checkbox" id="tri-remember" ${(TRI.touched ? TRI.remember : !amb) ? 'checked' : ''}><span>Lembrar esta categoria para <b>${esc(t.merchant || t.rawDescription)}</b>${sameN > 1 ? ` <span class="faint">(e as outras ${sameN - 1} sem categoria)</span>` : ''}${amb && !TRI.touched ? '<br><span class="xs muted">Desmarcado: este estabelecimento vende de tudo.</span>' : ''}${t.installment ? '<br><span class="xs muted">Desmarcado, a categoria vale só para esta compra parcelada.</span>' : ''}</span></label>
       ${t.amount < 0 ? `<details class="help-d"><summary>Não sabe o que é? Pesquise</summary>${lookupHelpHTML(t, 'tri')}</details>` : ''}</div>
     ${choices}
-    <div class="row"><button class="btn grow" type="button" data-act="tri-skip">Pular</button><button class="btn grow" type="button" data-act="tri-transfer">É transferência</button>${t.amount < 0 ? '<button class="btn grow" type="button" data-act="tri-unid" id="tri-unid" title="Conta como gasto em &quot;Não identificado&quot; e sai da fila">Não sei o que é</button>' : ''}</div>
+    <div class="row"><button class="btn grow" type="button" data-act="tri-skip">Pular</button><button class="btn grow" type="button" data-act="tri-transfer" id="tri-transfer">É transferência minha</button>${t.amount < 0 ? '<button class="btn grow" type="button" data-act="tri-unid" id="tri-unid" title="Conta como gasto em &quot;Não identificado&quot; e sai da fila">Não sei o que é</button>' : ''}</div>
   </div></div>`;
 }
 const triState = () => ({ idx: TRI.idx, done: TRI.done, streak: TRI.streak });
@@ -2098,7 +2378,7 @@ function triagePick(catId, extra) {
   if (res.series) toast(seriesLabel(res.series).replace(/^./, c => c.toUpperCase()));
   TRI.touched = false;
   pushUndo({ label, txs: res.txs, rules: res.rules, history: res.history, tri: st });
-  TRI.done = Math.min(TRI.total, TRI.done + Math.max(1, before - after)); TRI.streak++; TRI.group = null; TRI.newCat = false; TRI.idx++;
+  TRI.done = Math.min(TRI.total, TRI.done + Math.max(1, before - after)); TRI.streak++; TRI.group = null; TRI.newCat = false; TRI.trPick = false; TRI.idx++;
   renderTriage();
 }
 /** "Não sei o que é": built-in category "Não identificado" — counts as spending and leaves the queue for good */
@@ -2122,13 +2402,22 @@ function editorUnid(id) {
 function triageSkip() {
   const t = triageCurrent(); if (!t) return;
   pushUndo({ label: 'Pular ' + (t.merchant || t.rawDescription), txs: [], tri: triState() });
-  TRI.idx++; TRI.streak = 0; TRI.group = null; TRI.newCat = false; TRI.touched = false; renderTriage();
+  TRI.idx++; TRI.streak = 0; TRI.group = null; TRI.newCat = false; TRI.touched = false; TRI.trPick = false; renderTriage();
 }
 function triageTransfer() {
   const t = triageCurrent(); if (!t) return;
-  pushUndo({ label: 'Transferência: ' + (t.merchant || t.rawDescription), txs: [clone(t)], tri: triState() });
-  commit({ txs: [Object.assign({}, t, { kind: 'transfer', categoryId: null, catSource: 'manual' })] });
-  TRI.done = Math.min(TRI.total, TRI.done + 1); TRI.streak++; TRI.idx++; TRI.group = null; TRI.newCat = false; TRI.touched = false; renderTriage();
+  TRI.trPick = true; TRI.group = null; TRI.newCat = false; renderTriage();
+}
+/** "É transferência minha" → the other account (or "Conta não cadastrada"); the counterpart row found there is linked */
+function triageTransferTo(accId, pairId) {
+  const t = triageCurrent(); if (!t) return;
+  const st = triState();
+  const before = uncatCount();
+  // "Lembrar" ticked: the counterparty (a person's name, never a company) becomes a transfer rule — like a category
+  const rb = $('#tri-remember'); const cp = E.counterparty ? E.counterparty(t) : null;
+  const res = setTransfer(t, accId, pairId || null, !!(rb && rb.checked && cp && cp.name && !cp.company));
+  pushUndo({ label: 'Transferência: ' + (t.merchant || t.rawDescription), txs: res.txs, rules: res.rules, tri: st });
+  TRI.done = Math.min(TRI.total, TRI.done + Math.max(1, before - uncatCount())); TRI.streak++; TRI.idx++; TRI.group = null; TRI.newCat = false; TRI.touched = false; TRI.trPick = false; renderTriage();
 }
 function triageUndo() {
   const u = TRI.undo.pop(); if (!u) return;
@@ -2138,7 +2427,7 @@ function triageUndo() {
   if (u.history) d.history = u.history;
   // restored records get a fresh updatedAt so the merge on the server keeps the undo
   commit({ txs: (u.txs || []).map(t => clone(t)), meta });
-  Object.assign(TRI, u.tri, { group: null, newCat: false, touched: false });
+  Object.assign(TRI, u.tri, { group: null, newCat: false, touched: false, trPick: false });
   renderTriage();
   toast('Desfeito: ' + u.label);
 }
@@ -2146,7 +2435,7 @@ function triageUndo() {
 /* file pickers: some Android WebViews do not implement the file chooser, so the tap does nothing. Detected by UA up
    front, and at runtime (Android only): a tap on the picker that within 1.5 s neither hides/blurs the page nor fires
    change (nor a later cancel) counts as "picker did not open". The only effect is that the paste section opens (no text). */
-const FILE_ACCEPT = '.csv,.txt,.tsv,.xlsx,.xls,.pdf,text/*,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream';
+const FILE_ACCEPT = '.csv,.txt,.tsv,.xlsx,.xls,.pdf,.zip,text/*,application/pdf,application/zip,application/x-zip-compressed,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream';
 const BACKUP_ACCEPT = '.json,application/json,text/*,application/octet-stream';
 const UA = navigator.userAgent || '';
 const IS_ANDROID = /Android/i.test(UA);
@@ -2186,16 +2475,27 @@ async function readBytes(file) {
   });
 }
 /** 'xlsx' | 'text' | error message: by extension first, then by content (Android may hand over odd names/MIME types) */
-function tableFileKind(file, bytes) {
-  const n = String(file.name || '').toLowerCase(); const ext = (/\.([a-z0-9]{1,5})$/.exec(n) || [])[1] || '';
-  const b = bytes || new Uint8Array(0);
-  const zip = b[0] === 0x50 && b[1] === 0x4b; const ole = b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0;
-  if (['xlsx', 'xls'].includes(ext) || zip || ole) return 'xlsx';
-  if ((b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) || ext === 'pdf') return 'pdf';
-  if (['csv', 'txt', 'tsv'].includes(ext)) return 'text';
-  const head = Array.from(b.subarray(0, 2048)); const bin = head.filter(c => c === 0 || (c < 9) || (c > 13 && c < 32 && c !== 27)).length;
-  if (head.length && bin / head.length < 0.02) return 'text';
-  return 'este tipo de arquivo não é aceito (use PDF, CSV, TXT, TSV, XLSX ou XLS)';
+function tableFileKind(file, bytes) { return E.fileKindOf(file.name, bytes); }
+/** ZIP of statements (a bank's "download all"): its CSV/XLSX/PDF files go to the list as if chosen one by one */
+async function inflateRaw(raw) {
+  if (typeof DecompressionStream === 'undefined') { const e = new Error('zip_browser'); e.code = 'zip_browser'; throw e; }
+  const ds = new DecompressionStream('deflate-raw');
+  const out = await new Response(new Blob([raw]).stream().pipeThrough(ds)).arrayBuffer();
+  return new Uint8Array(out);
+}
+async function expandArchives(files) {
+  const out = [], errs = [];
+  for (const f of files) {
+    let buf = null;
+    try { buf = await readBytes(f); } catch (e) { out.push(f); continue; }
+    if (tableFileKind(f, buf) !== 'zip') { out.push(f); continue; }
+    try {
+      const ents = await E.unzipEntries(buf, { inflate: inflateRaw });
+      if (!ents.length) errs.push('"' + f.name + '" não tem extratos (CSV, XLSX, PDF) dentro.');
+      for (const en of ents) out.push(new File([en.bytes], en.name));
+    } catch (e) { errs.push('Não consegui abrir "' + f.name + '": ' + fileErrMsg(e)); }
+  }
+  return { files: out, errs };
 }
 function newImp(){ return { fxRates:{}, pdf:null, pdfPw:null, tab:'arquivo', step:1, accountId: defaultAccountId(), newAcc:{ name:'', type:'credit_card' }, paste:'', fileName:'', encoding:'', analysis:null, profile:null, matched:null, result:null, dedup:null, checksum:'', layoutName:'', ai:null, aiProblems:[], done:null, hol:null, importId:null, err:'', pasteOpen:false, reading:'', fromPaste:false, pasted:0 }; }
 function defaultAccountId(){ const a = (S.mode==='real' && S.real ? S.real.accounts : []).filter(a=>a.type!=='payslip'); return a.length ? a[0].id : '__new'; }
@@ -2293,6 +2593,9 @@ function fileErrMsg(e){
   if(c==='pdf_password_wrong') return 'senha do PDF incorreta.';
   if(c==='pdf_invalid') return 'o arquivo não parece um PDF válido (corrompido ou incompleto).';
   if(c==='pdf_load_cdn') return 'o leitor de PDF não carregou: nem o cdnjs nem o jsDelivr responderam. Confira a conexão (ou se uma rede/extensão bloqueia esses sites) e tente de novo. Enquanto isso, dá para importar o extrato em CSV/XLSX.';
+  if(c==='zip_encrypted') return 'o ZIP tem senha. Extraia os arquivos no computador/celular e escolha-os direto.';
+  if(c==='zip_invalid' || c==='zip_method') return 'não consegui abrir este ZIP. Extraia os arquivos e escolha-os direto.';
+  if(c==='zip_browser') return 'este navegador não abre ZIP. Extraia os arquivos e escolha-os direto.';
   if(c==='pdf_unavailable' || c==='pdf_load') return 'o leitor de PDF não carregou. Confira a conexão e tente de novo.';
   return (e && e.message || String(e)) + '.';
 }
@@ -2447,14 +2750,13 @@ function startAnalysis(analysis){
   const m = profiles.length ? eng('matchProfile', analysis, profiles) : null;
   I.matched = m || null;
   I.profile = m ? clone(m) : (eng('profileFromAnalysis', analysis) || null);
+  if(I.profile) curFromFile(I.profile, analysis);
   I.upgraded = [];
   if(m && I.profile){
     // layouts saved before v2 ignored the Parcela/Hora columns (D1/D2): adopt what the analysis finds now
-    const used = new Set(Object.values(I.profile.columns||{}));
-    for(const role of ['installment','time']){
-      const c = (analysis.columns||[]).find(x=>x.role===role);
-      if(c && I.profile.columns[role]==null && !used.has(c.index)){ I.profile.columns = Object.assign({}, I.profile.columns, { [role]: c.index }); used.add(c.index); I.upgraded.push(ROLE_LBL[role]); }
-    }
+    // (v2.5: also who paid/received, the transaction type and currency exchange columns)
+    const ad = eng('adoptInfoColumns', I.profile, analysis);
+    if(ad && ad.added.length){ I.profile = ad.profile; I.upgraded = ad.added.map(r=>ROLE_LBL[r]||r); }
   }
   if(!I.profile){ I.err = 'Não consegui montar a leitura deste layout.'; I.step = 2; renderImport(); return; }
   I.layoutName = m ? m.name : '';
@@ -2706,12 +3008,15 @@ function commitImport(){
   const dts = added.map(t=>t.date).sort();
   S.real.imports[I.importId] = { id:I.importId, fileName:I.fileName||'arquivo', at:nowISO(), updatedAt:nowISO(), accountId:accId, profileId, count:added.length, total:added.reduce((s,t)=>s+t.amount,0),
     from: dts[0]||null, to: dts[dts.length-1]||null, duplicates:(I.dedup.duplicates||[]).length, hasBalance: (I.result.transactions||[]).some(t=>t.balance!=null), kindGuess: eng('guessAccountType', I.analysis, I.result.transactions) || null };
+  { const hn = eng('importHolder', I.analysis, I.result); if(hn) S.real.imports[I.importId].holderName = hn; }
   let pdfNote = '';
   if(I.pdf){
     const f = pdfImportFields(I.pdf); Object.assign(S.real.imports[I.importId], f);
     if(f.cycleStart){ S.real.imports[I.importId].from = f.cycleStart; S.real.imports[I.importId].to = f.cycleEnd; }
   }
   pdfNote = pdfAdoptAccount(accId, I.pdf, I.profile);
+  // every row was already there: no import record (an import without rows would be an orphan in Gerenciar dados)
+  if(!added.length) delete S.real.imports[I.importId];
   if(saveFxRates()) metaN.push('settings');
   const auto = added.filter(t=>t.categoryId).length;
   const tri = added.filter(isUncat).length;
@@ -2748,6 +3053,7 @@ async function readFileAnalysis(file, opts) {
     if (!a) throw new Error('não consegui montar a tabela do PDF');
     return { encoding: 'PDF', analysis: a };
   }
+  if (kind === 'zip') throw new Error('é um arquivo ZIP — escolha-o junto com outros arquivos ou arraste-o para a lista; os extratos de dentro entram um por um');
   if (kind !== 'xlsx' && kind !== 'text') throw new Error(kind);
   if (kind === 'xlsx') {
     const XLSX = await loadXLSX();
@@ -2761,9 +3067,17 @@ async function readFileAnalysis(file, opts) {
   return { encoding: dec.encoding, analysis: eng('analyzeTable', dec.text) };
 }
 async function handleFiles(list) {
-  const files = Array.from(list || []).filter(f => f && f.name);
+  let files = Array.from(list || []).filter(f => f && f.name);
   if (!files.length) return;
   const I = S.imp;
+  if (files.some(f => /\.zip$/i.test(f.name) || /zip/.test(f.type || ''))) {
+    const x = await expandArchives(files);
+    if (x.errs.length) toast(x.errs.join(' '), true);
+    files = x.files;
+    if (!files.length) return;
+    // a ZIP always opens the list (it usually holds several statements)
+    if (files.length === 1 && !I.batch) I.batch = { items: [], done: null, shared: '', sharedTouched: false, newAccs: [], form: null, seq: 0 };
+  }
   if (files.length === 1 && !I.batch) { handleFile(files[0]); return; }
   I.err = '';
   const B = I.batch || (I.batch = { items: [], done: null, shared: '', sharedTouched: false, newAccs: [], form: null, seq: 0 });
@@ -2795,6 +3109,11 @@ async function bfRead(it, f, password) {
     const m = profiles.length ? eng('matchProfile', r.analysis, profiles) : null;
     it.matched = m || null;
     it.profile = m ? clone(m) : eng('profileFromAnalysis', r.analysis);
+    if (m) { const ad = eng('adoptInfoColumns', it.profile, r.analysis); if (ad && ad.added.length) it.profile = ad.profile; }
+    // the currency is the file's own (one layout serves a wallet's USD, CNY and BRL statements alike)
+    curFromFile(it.profile, r.analysis);
+    // only a header (a period without movements): nothing to configure, nothing to import
+    if (!m && r.analysis.empty) { it.configured = true; it.layoutName = it.profile.name; it.empty = true; }
     if (r.analysis.source === 'pdf') {
       it.pdf = r.analysis.pdf;
       // a PDF needs no column setup: the reconstructed table is ready (the user can still "Revisar leitura")
@@ -2823,7 +3142,7 @@ function batchDetectKind(it) {
   if (it.pdf && it.pdf.kind) { it.kind = it.pdf.kind; return; }
   if (!it.profile || !it.analysis) { it.kind = null; return; }
   const r = eng('applyProfile', it.analysis.rows, it.profile, { accountId: '__kind', importId: '__kind' }) || { transactions: [] };
-  let k = eng('importKind', r.transactions, null) || null;
+  let k = eng('importKind', r.transactions, { fileName: it.name }) || null;
   if (!k) { const g = eng('guessAccountType', it.analysis, r.transactions); k = g === 'checking' ? 'extrato' : g === 'credit_card' ? 'fatura' : null; }
   it.kind = k;
 }
@@ -2838,7 +3157,9 @@ function suggestAccount(it) {
   const cands = [];
   if (it.matched && byId(it.matched.defaultAccountId)) cands.push(byId(it.matched.defaultAccountId));
   if (it.matched) freq(imps.filter(r => r.profileId === it.matched.id && (!it.kind || kindOfImp(r) === it.kind))).forEach(a => { if (!cands.includes(a)) cands.push(a); });
-  const fits = a => !it.kind || !kindMismatch(it.kind, a.type);
+  const fits = a => (!it.kind || !kindMismatch(it.kind, a.type)) && curFits(it, a, accs);
+  // a statement in a foreign currency goes to the account in that currency when there is one
+  if (fileCur(it) !== 'BRL') { const c = accs.filter(a => a.currency === fileCur(it) && fits(a)); if (c.length === 1) return { id: c[0].id, note: cands[0] && cands[0] !== c[0] ? { from: cands[0].id, to: c[0].id } : null }; }
   const ok = cands.find(fits);
   if (ok) return { id: ok.id, note: cands[0] !== ok ? { from: cands[0].id, to: ok.id } : null };
   if (cands.length && it.kind) {
@@ -2890,9 +3211,25 @@ function bfMajorityType(B) {
   return k.length && nf * 2 < k.length ? 'checking' : 'credit_card';
 }
 /** an account of the file's kind: the layout's suggestion when it fits, else the only account of that type */
+/** the currency of a file (a statement kept in USD/EUR/CNY…) and whether an account can hold it: an account in another
+ *  currency never can; with an account in the file's currency, only that one */
+const fileCur = it => (it && ((it.analysis && it.analysis.currency) || (it.profile && it.profile.currency))) || 'BRL';
+function curFits(it, a, accs) {
+  const cur = fileCur(it), ac = (a && a.currency) || 'BRL';
+  if (!a) return true;
+  if (a.currency && ac !== cur) return false;
+  if (cur !== 'BRL' && (accs || []).some(x => x.currency === cur)) return ac === cur;
+  return true;
+}
+function curFromFile(profile, analysis) {
+  if (!profile || !analysis || analysis.source === 'pdf' && !analysis.currency) return;
+  if (analysis.currency && analysis.currency !== 'BRL') profile.currency = analysis.currency; else delete profile.currency;
+}
 function bfFitFor(it) {
-  if (!it.kind) return null;
   const accs = bfAccounts();
+  const byCur = fileCur(it) !== 'BRL' ? accs.filter(a => a.currency === fileCur(it)) : [];
+  if (byCur.length === 1 && (!it.kind || !kindMismatch(it.kind, byCur[0].type))) return byCur[0].id;
+  if (!it.kind) return null;
   const s = it.sug && it.sug.id ? accs.find(a => a.id === it.sug.id) : null;
   if (s && !kindMismatch(it.kind, s.type)) return s.id;
   const exact = accs.filter(a => a.type === kindAccType(it.kind));
@@ -2906,9 +3243,11 @@ function bfAuto(B, it) {
   const sug = it.sug || { id: '', note: null };
   if (!B.sharedTouched && sug.id && sug.id !== sh) { it.ov = { id: sug.id, auto: true, note: sug.note ? Object.assign({ layout: true }, sug.note) : (sh ? { layout: true, to: sug.id } : null) }; return; }
   const at = sh ? bfAccTypeOf(sh) : null;
-  if (sh && it.kind && at && kindMismatch(it.kind, at)) {
+  const shAcc = sh ? bfAccounts().find(a => a.id === sh) : null;
+  if (sh && ((it.kind && at && kindMismatch(it.kind, at)) || (shAcc && !curFits(it, shAcc, bfAccounts())))) {
     const fit = bfFitFor(it);
-    if (fit && fit !== sh) it.ov = { id: fit, auto: true, note: { shared: true, from: sh, to: fit } };
+    const curOnly = !(it.kind && at && kindMismatch(it.kind, at));
+    if (fit && fit !== sh) it.ov = { id: fit, auto: true, note: Object.assign({ shared: true, from: sh, to: fit }, curOnly ? { cur: fileCur(it) } : {}) };
   }
 }
 function bfAutoAll(B) { B.items.forEach(it => bfAuto(B, it)); }
@@ -3005,7 +3344,11 @@ function bfRowHTML(it) {
   const k = esc(it.key);
   const n = it.ov && it.ov.auto ? it.ov.note : null;
   const kindTxt = it.kind === 'extrato' ? 'um extrato bancário' : 'uma fatura de cartão';
-  const note = !n || !acc ? '' : `<div class="banner info xs" data-note="${k}"><div class="grow">${n.shared
+  const note = !n || !acc ? '' : `<div class="banner info xs" data-note="${k}"><div class="grow">${n.cur
+      ? `Só este arquivo vai para <b>${esc(bfAccNameOf(n.to))}</b>: o extrato está em ${esc(n.cur)}, a moeda dessa conta.`
+      : n.from && n.to && fileCur(it) !== 'BRL' && (bfAccounts().find(a => a.id === n.to) || {}).currency === fileCur(it)
+      ? `Escolhi <b>${esc(bfAccNameOf(n.to))}</b>: o extrato está em ${esc(fileCur(it))}, a moeda dessa conta.`
+      : n.shared
       ? `Só este arquivo vai para <b>${esc(bfAccNameOf(n.to))}</b>: é ${kindTxt} e a conta de todos (${esc(bfAccNameOf(n.from))}) é ${esc((ACC_TYPES[bfAccTypeOf(n.from)] || '').toLowerCase())}.`
       : n.from ? `Escolhi <b>${esc(bfAccNameOf(n.to))}</b>: este arquivo é ${kindTxt} e o layout estava ligado a ${esc(accName(n.from))} (${esc(ACC_TYPES[accType(n.from)] || '')}).`
         : `Este layout costuma ir para <b>${esc(bfAccNameOf(n.to))}</b>.`}</div></div>`;
@@ -3077,7 +3420,7 @@ function bfConfigSave() {
   it.checksum = I.checksum || it.checksum;
   batchDetectKind(it);
   // other files of the same (new) layout take the same reading
-  for (const o of S.imp.batch.items) if (o !== it && !o.matched && !o.configured && o.analysis && o.analysis.fingerprint === it.analysis.fingerprint) { o.profile = clone(it.profile); o.layoutName = name; o.configured = true; batchDetectKind(o); o.sug = suggestAccount(o); bfAuto(S.imp.batch, o); }
+  for (const o of S.imp.batch.items) if (o !== it && !o.matched && !o.configured && o.analysis && o.analysis.fingerprint === it.analysis.fingerprint) { o.profile = clone(it.profile); curFromFile(o.profile, o.analysis); o.layoutName = name; o.configured = true; batchDetectKind(o); o.sug = suggestAccount(o); bfAuto(S.imp.batch, o); }
   it.sug = suggestAccount(it); bfAuto(S.imp.batch, it);
   I.batchKey = null; I.step = 1;
   bfRefresh(); window.scrollTo({ top: 0 });
@@ -3130,16 +3473,19 @@ function bfImport() {
     const it = ready.find(x => x.importId === r.importId);
     const added = r.addedIds.map(id => txById(id)).filter(Boolean);
     const dts = added.map(t => t.date).sort();
-    const parsed = (eng('applyProfile', it.analysis.rows, it.profile, { accountId: it.accountId, importId: it.importId, fxRates: fxr }) || { transactions: [] }).transactions;
+    const parsedRes = eng('applyProfile', it.analysis.rows, it.profile, { accountId: it.accountId, importId: it.importId, fxRates: fxr }) || { transactions: [] };
+    const parsed = parsedRes.transactions;
     d.imports[r.importId] = { id: r.importId, fileName: it.name, at: now, updatedAt: now, accountId: it.accountId, profileId: it.profileId || null, count: added.length,
       total: added.reduce((s, t) => s + t.amount, 0), from: dts[0] || null, to: dts[dts.length - 1] || null, duplicates: r.duplicates.length,
       hasBalance: parsed.some(t => t.balance != null), kindGuess: eng('guessAccountType', it.analysis, parsed) || null, batch: true };
+    { const hn = eng('importHolder', it.analysis, parsedRes); if (hn) d.imports[r.importId].holderName = hn; }
     let note = '';
     if (it.pdf) {
       const f = pdfImportFields(it.pdf); Object.assign(d.imports[r.importId], f);
       if (f.cycleStart) { d.imports[r.importId].from = f.cycleStart; d.imports[r.importId].to = f.cycleEnd; }
     }
     note = pdfAdoptAccount(it.accountId, it.pdf, it.profile);
+    if (!added.length) delete d.imports[r.importId]; // only duplicates (or an empty file): nothing to record
     summary.push({ name: it.name, importId: r.importId, imported: added.length, dup: r.duplicates.length, err: r.errors.length, auto: added.filter(t => t.categoryId).length, account: accName(it.accountId), note });
   }
   const addedAll = res.addedIds.map(id => txById(id)).filter(Boolean);
@@ -3536,7 +3882,7 @@ function openSettings(step) {
     <div class="field"><span class="lbl">Tema</span><div class="seg" role="group" aria-label="Tema">${[['system', 'Sistema'], ['light', 'Claro'], ['dark', 'Escuro']].map(([k, v]) => `<button type="button" data-act="theme" data-v="${k}" aria-pressed="${theme === k}">${v}</button>`).join('')}</div></div>
     <div class="field"><span class="lbl">Armazenamento</span><p class="small">${esc(st)}</p>
       ${signedOut() ? '<div class="row"><button class="btn primary sm" type="button" data-act="login">Entrar</button></div>' : ''}</div>
-    <div class="field"><span class="lbl">Contas</span><div class="row"><button class="btn" type="button" data-act="accounts" id="btn-accounts">Contas e importações</button><button class="btn" type="button" data-act="manage" id="btn-manage">Gerenciar dados</button></div>
+    <div class="field"><span class="lbl">Contas</span><div class="row"><button class="btn" type="button" data-act="accounts" id="btn-accounts">Contas e importações</button><button class="btn" type="button" data-act="manage" id="btn-manage">Gerenciar dados</button><button class="btn" type="button" data-act="transfers" id="btn-transfers">Transferências e seus nomes</button></div>
       <p class="xs faint">Gerenciar dados: excluir o que entrou errado — um arquivo, um mês, uma conta ou lançamentos escolhidos.</p></div>
     <div class="field" id="carry-set">${carrySettingsHTML()}</div>
     ${fxSettingsHTML()}
@@ -3954,6 +4300,19 @@ const ACT = {
   'ed-unid': el => editorUnid(el.dataset.id),
   'toast-act': () => { const f = toast._act; toast._act = null; $('#toast').hidden = true; if (f) f(); },
   'tri-transfer': () => triageTransfer(),
+  'tri-tr-back': () => { TRI.trPick = false; renderTriage(); },
+  'tri-tr-acc': el => triageTransferTo(el.dataset.acc, el.dataset.pair || null),
+  transfers: () => { if ($('#triage-root').innerHTML) return; openTransfersSheet(); },
+  'who-confirm': el => { const sel = whoSelected(el.dataset.where); const names = whoCandidates().filter(c => sel.includes(c.key)).flatMap(c => c.variants); if (!names.length) { toast('Marque pelo menos um nome — ou toque em "Agora não".', true); return; } applyOwnerNames(names); },
+  'who-later': () => { const keys = whoCandidates().map(c => c.key); updateSettings(st => { st.ownerNamesAsked = true; st.ownerNamesDismissed = [...new Set((st.ownerNamesDismissed || []).concat(keys))].slice(-200); }); toast('Tudo bem. Dá para informar depois em Ajustes → Transferências.'); },
+  'tr-confirm': el => trConfirm(el.dataset.key),
+  'tr-reject': el => trReject(el.dataset.key),
+  'tr-apply-pending': () => trApplyPending(),
+  'tr-apply-manual': () => applyManualOwn(),
+  'tr-skip-manual': () => { S.trUI.askManual = []; renderTransfersSheet(); },
+  'tr-review-undo': () => trReviewUndo(),
+  'tr-name-add': () => { const i = $('#tr-name-new'); const v = i ? i.value.trim() : ''; if (!v || v.split(/\s+/).length < 2) { toast('Digite nome e sobrenome, como aparece no extrato.', true); return; } S.trUI.addName = ''; applyOwnerNames([v]); },
+  'tr-name-del': el => { const n = el.dataset.name; updateSettings(st => { st.ownerNames = (st.ownerNames || []).filter(x => x !== n); }); toast('Nome removido. Os lançamentos já ajustados continuam como estão.'); },
   'tri-undo': () => triageUndo(),
   'imp-tab': el => { S.imp.tab = el.dataset.t; renderImport(); },
   'imp-paste': () => handlePaste(),
@@ -4125,12 +4484,15 @@ document.addEventListener('change', ev => {
       if (t.value === '__new') { if (p) ncOpen(p); return; }
       t.dataset.prev = t.value;
       if (p) { const f = $('#' + p + '-nc'); if (f) f.hidden = true; }
-      if (t.id === 'ed-cat' && t.value) { const k = kindFor(t.value); const ks = $('#ed-kind'); const cur = txById(((S.sheet || {}).id) || ''); if (k && ks && (!cur || countable(cur))) ks.value = k; const rb = $('#ed-remember'); if (rb && cur) rb.checked = rememberDefault(cur, t.value); }
+      if (t.id === 'ed-cat' && t.value) { const k = kindFor(t.value); const ks = $('#ed-kind'); const cur = txById(((S.sheet || {}).id) || ''); if (k && ks && (!cur || countable(cur))) { ks.value = k; ks.dispatchEvent(new Event('change', { bubbles: true })); } const rb = $('#ed-remember'); if (rb && cur) rb.checked = rememberDefault(cur, t.value); }
       return;
     }
     if (t.dataset && t.dataset.alf) { alInput(t); return; }
     if (t.dataset && t.dataset.ncgroup) { const ng = $('#' + t.dataset.ncgroup + '-nc-ng'); if (ng) ng.hidden = t.value !== '__newgroup'; return; }
     if (t.id === 'tri-remember') { TRI.remember = t.checked; TRI.touched = true; return; }
+    if (t.id === 'ed-kind') { const a = $('#ed-tr'), b = $('#ed-cp'); if (a) a.hidden = t.value !== 'transfer'; if (b) b.hidden = t.value !== 'card_payment'; return; }
+    if (t.id === 'ed-tr-acc') { const cur = txById(((S.sheet || {}).id) || ''); const box = $('#ed-tr-pairs'); if (cur && box) box.innerHTML = t.value ? edPairHTML(cur, t.value) : ''; return; }
+    if (t.dataset && t.dataset.who) { const root = t.closest('[data-who-where]'); if (root) { S.trUI = Object.assign(S.trUI || {}, { who: whoSelected(root.dataset.whoWhere) }); } return; }
     if (t.id === 'cc-type') { ccSet({ type: t.value }); return; }
     if (t.id === 'cc-range') { ccSet({ range: t.value === 'all' ? 'all' : +t.value }); return; }
     if (t.id === 'cc-group') { ccSet({ level: 'category', groupId: t.value }); return; }

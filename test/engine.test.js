@@ -133,8 +133,11 @@ test('Nubank-like card CSV: positive purchases, negative payment', () => {
   // v2: marketplaces are ambiguous — never auto-assigned, offered as triage suggestions
   assert.equal(mg.categoryId, null);
   assert.ok(E.suggestCategories(mg, {}).some(s => s.categoryId === 'compras.marketplace'));
-  assert.equal(mg.date, '2026-11-08'); // parcela 3/10 bought 08/09 is booked two months later
-  assert.equal(mg.originalDate, '2026-09-08');
+  // v2.5 corpus review: this layout prints parcela 3/10 on its POSTING date, among the bill's other rows (shifting it two
+  // months would push it past the bill) → booked as printed; a file that prints the purchase date still shifts (below)
+  assert.equal(mg.date, '2026-09-08');
+  assert.equal(mg.originalDate, undefined);
+  assert.equal(res.installmentDate, 'as_is');
   assert.equal(cl.find(t => /Ifood/.test(t.rawDescription)).categoryId, 'alimentacao.delivery');
   assert.equal(cl.find(t => /Drogasil/.test(t.rawDescription)).merchant, 'DROGASIL');
   assert.equal(cl.find(t => /IOF/.test(t.rawDescription)).categoryId, 'impostos.iof');
@@ -769,7 +772,7 @@ test('v2 D3/D6/item 13: migrateData fixes kinds, merchants, imports, updatedAt �
   assert.ok(by.h.deleted);
   assert.equal(m.data.txs.length, txs.length, 'nothing deleted');
   assert.ok(m.data.txs.every(t => t.updatedAt));
-  assert.equal(m.data.settings.schemaVersion, 2);
+  assert.equal(m.data.settings.schemaVersion, E.SCHEMA_VERSION); assert.equal(E.SCHEMA_VERSION, 3);
   assert.equal(Object.keys(m.data.imports).length, 2);
   assert.equal(m.data.imports['imp-extrato01'].count, 5);
   assert.equal(m.data.imports['imp-fatura01'].accountId, 'cartao');
@@ -804,7 +807,7 @@ test('v2 D5/item 8: ambiguous merchants never auto-assign; word boundaries; spec
   const C = (raw, amount) => E.classify({ rawDescription: raw, amount: amount == null ? -1000 : amount, accountId: 'x' }, {});
   assert.equal(C('Pix enviado para Mercado Pago Instituicao de Pagamento Ltda').categoryId, null);
   assert.equal(C('MP *MERCADOLIVRE').categoryId, null);
-  assert.equal(C('MERCADOLIVRE*RELAXMEDI').categoryId, null);
+  assert.equal(C('MERCADOLIVRE*LOJAEXEMPLO').categoryId, null);
   assert.equal(C('AMAZON MARKETPLACE').categoryId, null);
   assert.equal(C('AMAZON PRIME VIDEO').categoryId, 'lazer.streaming');
   assert.equal(C('PRIME VIDEO').categoryId, 'lazer.streaming');
