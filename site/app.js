@@ -439,6 +439,7 @@ function renderAfterChange(first, remote) {
   }
   if ($('#triage-root').innerHTML) { if (!remote) return; triageRemoteRefresh(); return; }
   renderCurrent();
+  try { refreshOpenSheet(true); } catch (e) { console.error(e); }
   if (S.sheet && S.sheet.kind === 'accounts') renderAccountsSheet();
 }
 function pickMonth(force) {
@@ -492,9 +493,29 @@ function period() {
 }
 function periodLabel(short) {
   const p = period(); const [ey, em] = p.end.split('-').map(Number); const [sy, sm] = p.start.split('-').map(Number);
-  if (short) return S.ui.range === 1 ? MES3[em - 1] + '/' + String(ey).slice(2) : MES3[sm - 1] + '–' + MES3[em - 1] + '/' + String(ey).slice(2);
+  if (short) return S.ui.range === 1 ? MES3[em - 1] + '/' + String(ey).slice(2) : MES3[sm - 1] + (sy !== ey ? '/' + String(sy).slice(2) : '') + '–' + MES3[em - 1] + '/' + String(ey).slice(2);
   if (S.ui.range === 1) return MES[em - 1] + ' ' + ey;
-  return MES3[sm - 1] + (sy !== ey ? ' ' + sy : '') + ' – ' + MES3[em - 1] + ' ' + ey;
+  return MES3[sm - 1] + (sy !== ey ? ' ' + sy : '') + '–' + MES3[em - 1] + ' ' + ey;
+}
+/* v2.6: the ‹ › buttons move the whole window (1, 3, 6 or 12 months). The window never ends after the current
+   month — or after the newest month that has data, when a row is dated ahead (a holerite paid next month). */
+function periodMaxEnd() {
+  const nowYm = todayISO().slice(0, 7);
+  const ms = dataMonthsList(); const last = ms.length ? ms[ms.length - 1] : nowYm;
+  return last > nowYm ? last : nowYm;
+}
+function periodStepLbl(dir) {
+  const n = S.ui.range || 1;
+  if (n === 1) return dir < 0 ? 'Mês anterior' : 'Próximo mês';
+  return dir < 0 ? n + ' meses anteriores' : 'Próximos ' + n + ' meses';
+}
+const periodCanNext = () => S.ui.month < periodMaxEnd();
+/** moves the window by its own length; forward is clamped so the window ends at most at periodMaxEnd() */
+function stepPeriod(dir) {
+  const n = S.ui.range || 1;
+  if (dir < 0) S.ui.month = addMonths(S.ui.month, -n);
+  else { if (!periodCanNext()) return false; const to = addMonths(S.ui.month, n); const mx = periodMaxEnd(); S.ui.month = to > mx ? mx : to; }
+  return true;
 }
 const inPeriod = (t, p) => t.date >= p.from && t.date <= p.to;
 
@@ -507,17 +528,20 @@ function renderPainel() {
   const rate = inc > 0 ? (inc - exp) / inc : null;
   const narrow = el.clientWidth < 600 || window.innerWidth < 600;
   const unc = uncatCount();
+  // v2.6: keep the page height while the charts are redrawn (they measure the layout), so a step in the sticky
+  // period bar does not make the page jump up
+  const keepY = window.scrollY; if (keepY > 0) el.style.minHeight = el.offsetHeight + 'px';
   el.innerHTML = `
     ${unc && S.mode === 'real' ? `<div class="banner" id="triage-banner"><div class="grow"><b>${unc} lançamento${unc > 1 ? 's' : ''} sem categoria.</b> Classifique para o painel ficar certo.</div><button class="btn sm primary" type="button" data-act="triage">Classificar agora</button></div>` : ''}
     <div class="period" id="period-bar">
       <div class="month-nav">
-        <button class="icon-btn" type="button" data-act="month" data-d="-1" aria-label="Mês anterior"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg></button>
-        <span class="lbl-m" id="period-label"><span class="lbl-long">${esc(periodLabel())}</span><span class="lbl-short" aria-hidden="true">${esc(periodLabel(true))}</span></span>
-        <button class="icon-btn" type="button" data-act="month" data-d="1" aria-label="Próximo mês"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button class="icon-btn" type="button" data-act="month" data-d="-1" aria-label="${periodStepLbl(-1)}" title="${periodStepLbl(-1)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <span class="lbl-m" id="period-label" aria-live="polite"><span class="lbl-long">${esc(periodLabel())}</span><span class="lbl-short" aria-hidden="true">${esc(periodLabel(true))}</span></span>
+        <button class="icon-btn" type="button" data-act="month" data-d="1" aria-label="${periodStepLbl(1)}" title="${periodStepLbl(1)}" ${periodCanNext() ? '' : 'disabled'}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></button>
         <button class="icon-btn" type="button" data-act="month-menu" id="btn-month-menu" aria-label="Opções do mês"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18.5" cy="12" r="1.7"/></svg></button>
       </div>
       <div class="seg" role="group" aria-label="Período">
-        ${[1, 3, 6, 12].map(r => `<button type="button" data-act="range" data-r="${r}" aria-pressed="${S.ui.range === r}">${r === 1 ? 'Mês' : r + 'm'}</button>`).join('')}
+        ${[1, 3, 6, 12].map(r => `<button type="button" data-act="range" data-r="${r}" aria-pressed="${S.ui.range === r}" aria-label="${r === 1 ? 'Mês' : r + ' meses'}">${r === 1 ? '<span class="seg-l">Mês</span><span class="seg-s">1m</span>' : r + 'm'}</button>`).join('')}
       </div>
     </div>
     ${alertLineHTML()}
@@ -557,6 +581,7 @@ function renderPainel() {
   renderBudget(sum);
   drawSeries();
   renderFuture();
+  if (el.style.minHeight) { el.style.minHeight = ''; if (Math.abs(window.scrollY - keepY) > 1) window.scrollTo(0, keepY); updateStuck(); }
 }
 /* ---------- Painel: international purchases (v2.4b) ---------- */
 function fxLineHTML(p) {
@@ -754,8 +779,7 @@ function txForNode(node){
   if(/sem categoria|n[ãa]o categoriz/i.test(node.name||'')) return { kind:'uncat', txs: txs.filter(t=>!t.categoryId) };
   return { kind:'other', txs:[] };
 }
-function openNodeSheet(id){
-  const g = S._sankey; if(!g) return; const node = g.byId[id]; if(!node) return;
+function nodeSheetParts(node){
   const info = txForNode(node);
   let body = '';
   if(info.kind==='cat' && info.cat.isGroup){
@@ -765,7 +789,7 @@ function openNodeSheet(id){
   }
   if(info.txs.length){
     const sorted = info.txs.slice().sort((a,b)=>b.date.localeCompare(a.date));
-    body += `<h3>${sorted.length} lançamento${sorted.length>1?'s':''}</h3><div class="txlist">${sorted.slice(0,80).map(txRow).join('')}</div>`;
+    body += `<h3>${sorted.length} lançamento${sorted.length>1?'s':''}</h3>${sheetTxHint()}<div class="txlist">${sorted.slice(0,80).map(sheetTxRow).join('')}</div>`;
     if(sorted.length>80) body += `<p class="small muted">Mostrando 80 de ${sorted.length}. Veja todos em Transações.</p>`;
   } else if(String(node.id)==='carry') body += '<p class="muted">Parte da sobra deste mês que paga o déficit que veio dos meses anteriores. Enquanto houver déficit acumulado, a sobra vai primeiro para ele.</p><div class="row"><button class="btn sm" type="button" data-act="carry">Ver mês a mês</button></div>';
   else if(/^deficit/.test(String(node.id))) body += `<p class="muted">${({'deficit:card':'Gastos no cartão deste mês que só serão pagos na fatura do mês que vem. Por isso o mês fecha no vermelho sem faltar dinheiro agora.','deficit:inv':'Dinheiro que saiu de investimentos (resgates) para cobrir os gastos do mês.','deficit:bal':'O que faltou e saiu do saldo da conta ou da reserva.'})[node.id] || 'Quanto as saídas passaram das entradas no período.'}</p><div class="row"><button class="btn sm" type="button" data-act="carry">Ver mês a mês</button></div>`;
@@ -773,12 +797,27 @@ function openNodeSheet(id){
   else if(/impost|inss|irrf/i.test(node.name)) body += '<p class="muted">Descontos do holerite (INSS, IRRF e outros). Eles saem do salário bruto antes de o dinheiro chegar na conta.</p>';
   else if(/or[çc]amento/i.test(node.name)) body += '<p class="muted">Tudo o que entrou no período, antes de ser distribuído entre os gastos e a sobra.</p>';
   else body += '<p class="muted">Este bloco agrupa valores sem lançamentos individuais para mostrar aqui.</p>';
-  openSheet(`<div><span class="eyebrow">${esc(periodLabel())}</span><h2>${esc(node.name)}</h2><p class="money" style="font-size:1.1rem;font-weight:700">${brl(node.v)}</p></div>`, body);
+  return { head: `<div><span class="eyebrow">${esc(periodLabel())}</span><h2>${esc(node.name)}</h2><p class="money" id="node-total" data-cents="${node.v}" style="font-size:1.1rem;font-weight:700">${brl(node.v)}</p></div>`, body };
+}
+function openNodeSheet(id){
+  const g = S._sankey; if(!g) return; const node = g.byId[id]; if(!node) return;
+  const pr = nodeSheetParts(node);
+  openSheet(pr.head, pr.body, null, { kind:'node', id: String(id), name: node.name, label: node.name });
+}
+/* after a change: the same block with the new numbers (or empty, when nothing is left in it) */
+function refreshNodeSheet(){
+  const m = S.sheet; if(!m || m.kind!=='node') return;
+  const g = S._sankey; const node = g && g.byId[m.id];
+  if(node){ const pr = nodeSheetParts(node); setSheetContent(pr.head, pr.body); return; }
+  setSheetContent(`<div><span class="eyebrow">${esc(periodLabel())}</span><h2>${esc(m.name)}</h2><p class="money" id="node-total" data-cents="0" style="font-size:1.1rem;font-weight:700">${brl(0)}</p></div>`,
+    '<div class="empty" id="node-empty"><b>Nada neste bloco agora.</b><span class="small">Os lançamentos mudaram de categoria.</span></div>');
 }
 
 /* ---------- v2.1 sheets: Saúde dos dados, déficit mês a mês, menu do mês ---------- */
-function refreshOpenSheet(){
+function refreshOpenSheet(late){
   if(!S.sheet) return;
+  // drill-down sheets read the freshly drawn Painel (Sankey / category chart), so they refresh after it
+  if(late){ if(S.sheet.kind==='node') refreshNodeSheet(); else if(S.sheet.kind==='cc') refreshCcSheet(); return; }
   if(S.sheet.kind==='health') renderHealthSheet();
   else if(S.sheet.kind==='carry') renderCarrySheet();
   else if(S.sheet.kind==='month') renderMonthMenu();
@@ -1204,7 +1243,7 @@ function openTransfersSheet() {
   openSheet(`<span class="eyebrow">${esc(periodLabel())}</span><h2>Transferências</h2>`, '<div id="tr-body"></div>', null, { kind: 'transfers', label: 'Transferências' });
   renderTransfersSheet();
 }
-const trRow = (t, extra) => `<div class="tr-row" data-tx="${esc(t.id)}"><span class="grow"><span class="small"><b>${esc(accName(t.accountId))}</b> · ${esc(isoToDM(t.date))}</span><br><span class="xs muted tr-desc">${esc(t.rawDescription)}</span></span><span class="money ${t.amount > 0 ? 'in' : ''}">${t.amount > 0 ? '+' : ''}${brl(t.amount)}</span>${extra || ''}</div>`;
+const trRow = (t, extra) => `<button type="button" class="tr-row" data-act="edittx" data-id="${esc(t.id)}" data-tx="${esc(t.id)}"><span class="grow"><span class="small"><b>${esc(accName(t.accountId))}</b> · ${esc(isoToDM(t.date))}</span><br><span class="xs muted tr-desc">${esc(t.rawDescription)}</span></span><span class="money ${t.amount > 0 ? 'in' : ''}">${t.amount > 0 ? '+' : ''}${brl(t.amount)}</span>${extra || ''}</button>`;
 function renderTransfersSheet() {
   const el = $('#tr-body'); if (!el) return;
   const U = S.trUI || {};
@@ -1234,7 +1273,7 @@ function renderTransfersSheet() {
     ${pend ? `<div class="banner" id="tr-pending"><div class="grow"><b>${pend} ajuste${pend > 1 ? 's' : ''} automático${pend > 1 ? 's' : ''} encontrado${pend > 1 ? 's' : ''}</b> (${esc(Object.entries(dt.changes.reduce((o, c) => (o[c.reason] = (o[c.reason] || 0) + 1, o), {})).map(([r, n]) => n + ' ' + (TR_REASON_LBL[r] || r)).join(', '))}).</div><button class="btn sm primary" type="button" data-act="tr-apply-pending" id="tr-apply-pending">Aplicar</button></div>` : ''}
     ${dt.suggestions.length ? `<h3>Para confirmar (${dt.suggestions.length})</h3><div class="tr-list" id="tr-sugs">${sugHTML}</div>` : ''}
     <h3>Entre suas contas</h3>
-    ${ov.pairs.length ? `<div class="tr-list" id="tr-pairs">${ov.pairs.map(p => `<div class="tr-pair" data-out="${esc(p.out.id)}"><div class="row" style="justify-content:space-between"><b class="small">${esc(accName(p.from))} → ${esc(accName(p.to))}</b><span class="money">${brl(p.amount)}</span></div><span class="xs muted">${esc(isoToDM(p.out.date))}${p.in.date !== p.out.date ? ' → ' + esc(isoToDM(p.in.date)) : ''}${p.in.amount !== p.amount ? ' · chegou ' + esc(brl(p.in.amount)) : ''}</span></div>`).join('')}</div>` : `<p class="small muted" id="tr-pairs-empty">Nenhum par neste período.</p>`}
+    ${ov.pairs.length ? `<div class="tr-list" id="tr-pairs">${ov.pairs.map(p => `<button type="button" class="tr-pair" data-act="edittx" data-id="${esc(p.out.id)}" data-out="${esc(p.out.id)}"><span class="row" style="justify-content:space-between"><b class="small">${esc(accName(p.from))} → ${esc(accName(p.to))}</b><span class="money">${brl(p.amount)}</span></span><span class="xs muted">${esc(isoToDM(p.out.date))}${p.in.date !== p.out.date ? ' → ' + esc(isoToDM(p.in.date)) : ''}${p.in.amount !== p.amount ? ' · chegou ' + esc(brl(p.in.amount)) : ''}</span></button>`).join('')}</div>` : `<p class="small muted" id="tr-pairs-empty">Nenhum par neste período.</p>`}
     ${ov.external.length ? `<h3>Para contas fora do app</h3><div class="tr-list" id="tr-ext">${ov.external.map(g => `<details class="tr-ext" data-key="${esc(g.key)}"><summary><span class="grow"><b>${esc(g.label)}</b>${g.accountId ? '' : ' <span class="xs muted">· conta não cadastrada</span>'}<br><span class="xs muted">${g.rows.length} lançamento${g.rows.length > 1 ? 's' : ''}${g.out ? ' · saiu ' + esc(brl(g.out)) : ''}${g.in ? ' · entrou ' + esc(brl(g.in)) : ''}</span></span></summary>${g.rows.map(t => trRow(t)).join('')}${g.accountId ? '' : `<div class="row"><button class="btn sm" type="button" data-act="goto" data-tab="import">Importar essa conta</button></div>`}</details>`).join('')}</div>` : ''}
     ${ov.conversions.length ? `<h3>Conversões de moeda</h3><div class="tr-list" id="tr-conv">${ov.conversions.map(t => trRow(t)).join('')}</div>` : ''}
     ${rv && rvCounts.length ? `<div class="hw sev-info" id="tr-review"><b class="hw-t">Revisão de transferências${rv.undone ? ' (desfeita)' : ''}</b><p class="xs muted">Em ${esc(isoToBR(String(rv.at || '').slice(0, 10)))}, ao atualizar o app: ${esc(rvCounts.map(([r, n]) => n + ' ' + (TR_REASON_LBL[r] || r)).join(', '))}.</p>${rv.undone ? '' : '<div class="row"><button class="btn sm" type="button" data-act="tr-review-undo" id="tr-review-undo">Desfazer revisão</button></div>'}</div>` : ''}`;
@@ -1397,7 +1436,9 @@ function renderFuture(){
         const nm = it.merchant || it.name || it.rawDescription || 'Parcela';
         const inst = it.installment || (it.n!=null ? {n:it.n,total:it.total} : null);
         const amt = it.amount!=null ? it.amount : it.value;
-        return `<div class="row small" style="justify-content:space-between;flex-wrap:nowrap"><span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(nm)} ${inst&&inst.n?`<span class="tag">${inst.n}/${inst.total}</span>`:''}${it.originalDate?` <span class="xs faint">compra em ${esc(isoToDM(it.originalDate))}</span>`:''}</span><span class="money">${amt!=null?brl(Math.abs(amt)):''}</span></div>`; }).join('')}</div></details>`; }).join('')}</div><p class="xs faint">Projeção das parcelas que ainda vão chegar. Não entra nos totais: quando a fatura com a parcela real for importada, ela aparece no mês dela.</p>`
+        // a projected parcela is not a row of yours: it cannot be edited. The purchase it comes from can (its last imported parcela).
+        const src = it.sourceId ? txById(it.sourceId) : null;
+        return `<div class="row small fut-item" data-projected="1" style="justify-content:space-between;flex-wrap:nowrap"><span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(nm)} ${inst&&inst.n?`<span class="tag">${inst.n}/${inst.total}</span>`:''} <span class="xs faint">prevista</span>${it.originalDate?` <span class="xs faint">· compra em ${esc(isoToDM(it.originalDate))}</span>`:''}</span><span class="money">${amt!=null?brl(Math.abs(amt)):''}</span>${src?`<button type="button" class="icon-btn sm fut-src" data-act="edittx" data-id="${esc(src.id)}" aria-label="Editar a compra ${esc(nm)} (parcela importada ${src.installment?src.installment.n+'/'+src.installment.total:''})" title="Editar a compra (parcela importada)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button>`:''}</div>`; }).join('')}</div></details>`; }).join('')}</div><p class="xs faint">Projeção das parcelas que ainda vão chegar. Não entra nos totais e não dá para editar uma parcela prevista: o lápis abre a compra (a última parcela importada). Quando a fatura com a parcela real for importada, ela aparece no mês dela.</p>`
   : '<p class="muted small">Nenhuma compra parcelada em aberto.</p>'}`;
 }
 
@@ -1738,10 +1779,11 @@ function ccTxs(sid, i) {
     return members ? members.has(k) : k === s.id;
   });
 }
-function ccOpen(sid, i) {
-  const cc = S._cc; if (!cc) return;
-  const p = cc.data.periods[i]; if (!p) return;
+function ccSheetParts(sid, i) {
+  const cc = S._cc; if (!cc) return null;
+  const p = cc.data.periods[i]; if (!p) return null;
   const s = sid ? cc.data.series.find(x => x.id === sid) : null;
+  if (sid && !s) return null;
   const txs = ccTxs(sid, i).sort((a, b) => b.date.localeCompare(a.date));
   const hidden = new Set(cc.P.hidden);
   const tot = cc.data.series.filter(x => !hidden.has(x.id)).reduce((a, x) => a + Math.max(0, x.values[i]), 0);
@@ -1750,12 +1792,22 @@ function ccOpen(sid, i) {
   if (!s) {
     const rows = cc.data.series.filter(x => !hidden.has(x.id) && x.values[i] > 0).sort((a, b) => b.values[i] - a.values[i]);
     const mx = rows.length ? rows[0].values[i] : 1;
-    body += `<div class="bud">${rows.map(x => `<div class="bud-row"><div class="bud-top"><span class="nm"><i class="sw" style="background:${esc(x.fill)};width:10px;height:10px;border-radius:3px;display:inline-block"></i><span data-nm="${esc(x.id)}"></span></span><span class="money">${brl(x.values[i])} <span class="xs faint">${pct(x.values[i], tot)}</span></span></div><div class="bud-bar"><i style="width:${(x.values[i] / mx * 100).toFixed(1)}%;background:${esc(x.fill)}"></i></div></div>`).join('')}</div>`;
+    body += `<div class="bud">${rows.map(x => `<div class="bud-row"><div class="bud-top"><span class="nm"><i class="sw" style="background:${esc(x.fill)};width:10px;height:10px;border-radius:3px;display:inline-block"></i><span data-nm="${esc(x.id)}">${esc(x.name)}</span></span><span class="money">${brl(x.values[i])} <span class="xs faint">${pct(x.values[i], tot)}</span></span></div><div class="bud-bar"><i style="width:${(x.values[i] / mx * 100).toFixed(1)}%;background:${esc(x.fill)}"></i></div></div>`).join('')}</div>`;
   }
-  body += txs.length ? `<h3>${txs.length} lançamento${txs.length > 1 ? 's' : ''}</h3><div class="txlist">${txs.slice(0, 80).map(txRow).join('')}</div>${txs.length > 80 ? `<p class="small muted">Mostrando 80 de ${txs.length}. Veja todos em Transações.</p>` : ''}` : '<p class="muted">Nenhum lançamento.</p>';
-  openSheet(`<div><span class="eyebrow">${esc(ccPeriodName(p, cc.P.gran))}</span><h2 id="cc-sheet-title"></h2><p class="money" style="font-size:1.1rem;font-weight:700">${brl(v)}${s ? ` <span class="small muted" style="font-weight:500">· ${pct(Math.max(0, v), tot)} do período</span>` : ''}</p></div>`, body, null, { kind: 'cc', label: 'Lançamentos' });
-  $('#cc-sheet-title').textContent = s ? s.name : 'Gastos do período';
-  $$('[data-nm]').forEach(x => { const se = cc.data.series.find(y => y.id === x.dataset.nm); if (se) x.textContent = se.name; });
+  body += txs.length ? `<h3>${txs.length} lançamento${txs.length > 1 ? 's' : ''}</h3>${sheetTxHint()}<div class="txlist">${txs.slice(0, 80).map(sheetTxRow).join('')}</div>${txs.length > 80 ? `<p class="small muted">Mostrando 80 de ${txs.length}. Veja todos em Transações.</p>` : ''}` : '<p class="muted" id="cc-empty">Nenhum lançamento.</p>';
+  const head = `<div><span class="eyebrow">${esc(ccPeriodName(p, cc.P.gran))}</span><h2 id="cc-sheet-title">${esc(s ? s.name : 'Gastos do período')}</h2><p class="money" id="cc-sheet-total" data-cents="${v}" style="font-size:1.1rem;font-weight:700">${brl(v)}${s ? ` <span class="small muted" style="font-weight:500">· ${pct(Math.max(0, v), tot)} do período</span>` : ''}</p></div>`;
+  return { head, body, key: p.key, name: s ? s.name : 'Gastos do período' };
+}
+function ccOpen(sid, i) {
+  const pr = ccSheetParts(sid, i); if (!pr) return;
+  openSheet(pr.head, pr.body, null, { kind: 'cc', sid: sid || null, key: pr.key, name: pr.name, label: 'Lançamentos' });
+}
+function refreshCcSheet() {
+  const m = S.sheet; const cc = S._cc; if (!m || m.kind !== 'cc') return;
+  const i = cc ? cc.data.periods.findIndex(p => p.key === m.key) : -1;
+  const pr = i >= 0 ? ccSheetParts(m.sid, i) : null;
+  if (pr) { setSheetContent(pr.head, pr.body); return; }
+  setSheetContent(`<div><h2 id="cc-sheet-title">${esc(m.name)}</h2><p class="money" id="cc-sheet-total" data-cents="0" style="font-size:1.1rem;font-weight:700">${brl(0)}</p></div>`, '<p class="muted" id="cc-empty">Nenhum lançamento.</p>');
 }
 
 
@@ -1850,20 +1902,76 @@ function createCategoryFromForm(p) {
 }
 
 /* ---------- sheet ---------- */
-function openSheet(head, body, onClose, meta) {
+/* v2.6: sheets can stack. openSheet(…, { stack: true }) parks the open sheet (inert, kept in the DOM with its scroll)
+   and puts the new one on top; closeSheet() closes only the top one and brings the parked one back, refreshed with the
+   current data. Any other openSheet replaces the whole stack (as before); closeAllSheets() empties it. */
+S.sheetStack = [];
+function sheetLayerHTML(head, body, meta, depth) {
+  const z = depth ? ` style="z-index:${50 + depth * 2}"` : '';
+  const z1 = depth ? ` style="z-index:${51 + depth * 2}"` : '';
+  return `<div class="sheet-layer" data-depth="${depth}"><div class="scrim" data-act="closesheet"${z}></div><div class="sheet${depth ? ' stacked' : ''}"${z1} role="dialog" aria-modal="true" aria-label="${esc((meta && meta.label) || 'Detalhes')}"><div class="grab"></div>
+    <div class="sheet-h"><div class="grow">${head}</div><button class="icon-btn" type="button" data-act="closesheet" aria-label="${depth ? 'Voltar' : 'Fechar'}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="sheet-body" id="sheet-body">${body}</div></div></div>`;
+}
+function openSheet(head, body, onClose, meta, opts) {
   const root = $('#sheet-root');
-  root.innerHTML = `<div class="scrim" data-act="closesheet"></div><div class="sheet" role="dialog" aria-modal="true" aria-label="${esc((meta && meta.label) || 'Detalhes')}"><div class="grab"></div>
-    <div class="sheet-h"><div class="grow">${head}</div><button class="icon-btn" type="button" data-act="closesheet" aria-label="Fechar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
-    <div class="sheet-body" id="sheet-body">${body}</div></div>`;
+  const top = root.lastElementChild;
+  if (opts && opts.stack && top && S.sheet) {
+    const ae = document.activeElement;
+    const sh = top.querySelector('.sheet');
+    S.sheetStack.push({ meta: S.sheet, onClose: S._sheetClose, layer: top, scroll: sh ? sh.scrollTop : 0,
+      focus: ae && top.contains(ae) ? { el: ae, id: ae.dataset && ae.dataset.id, act: ae.dataset && ae.dataset.act } : null });
+    const sb = top.querySelector('#sheet-body'); if (sb) sb.id = 'sheet-body-under';
+    top.inert = true; top.setAttribute('aria-hidden', 'true'); top.classList.add('under');
+  } else { root.innerHTML = ''; S.sheetStack = []; }
+  root.insertAdjacentHTML('beforeend', sheetLayerHTML(head, body, meta, S.sheetStack.length));
   S._sheetClose = onClose || null;
   S.sheet = meta || { kind: 'other' };
   document.body.style.overflow = 'hidden';
-  setTimeout(() => { const f = root.querySelector('.sheet input:not([type=date]), .sheet select, .sheet button:not([data-act=closesheet])'); if (f && !('ontouchstart' in window)) f.focus({ preventScroll: true }); }, 50);
+  const layer = root.lastElementChild;
+  setTimeout(() => {
+    if (!layer.isConnected || layer !== root.lastElementChild) return;
+    const f = (opts && opts.focus && layer.querySelector(opts.focus)) || layer.querySelector('.sheet input:not([type=date]), .sheet select, .sheet button:not([data-act=closesheet])');
+    if (f && (!('ontouchstart' in window) || (opts && opts.focus))) f.focus({ preventScroll: true });
+  }, 50);
+}
+/** replaces the head and body of the TOP sheet, keeping its scroll position */
+function setSheetContent(head, body) {
+  const layer = $('#sheet-root').lastElementChild; if (!layer) return;
+  const sh = layer.querySelector('.sheet'); const sc = sh ? sh.scrollTop : 0;
+  const h = layer.querySelector('.sheet-h .grow'); if (h && head != null) h.innerHTML = head;
+  const b = layer.querySelector('.sheet-body'); if (b && body != null) b.innerHTML = body;
+  if (sh) sh.scrollTop = sc;
 }
 function closeSheet() {
-  $('#sheet-root').innerHTML = ''; document.body.style.overflow = '';
+  const root = $('#sheet-root');
+  if (S.sheetStack && S.sheetStack.length) {
+    const top = root.lastElementChild; if (top) top.remove();
+    const c = S._sheetClose;
+    const p = S.sheetStack.pop();
+    S.sheet = p.meta; S._sheetClose = p.onClose;
+    p.layer.inert = false; p.layer.removeAttribute('aria-hidden'); p.layer.classList.remove('under');
+    const sb = p.layer.querySelector('#sheet-body-under'); if (sb) sb.id = 'sheet-body';
+    if (c) c();
+    try { refreshOpenSheet(); refreshOpenSheet(true); } catch (e) { console.error(e); }
+    const sh = p.layer.querySelector('.sheet'); if (sh) sh.scrollTop = p.scroll;
+    // focus goes back to the row that opened the top sheet (re-found after the refresh)
+    let f = p.focus && p.focus.el && p.focus.el.isConnected ? p.focus.el : null;
+    if (!f && p.focus && p.focus.id) f = p.layer.querySelector(`[data-id="${CSS.escape(p.focus.id)}"]${p.focus.act ? `[data-act="${CSS.escape(p.focus.act)}"]` : ''}`) || p.layer.querySelector(`[data-id="${CSS.escape(p.focus.id)}"]`);
+    if (!f) f = p.layer.querySelector('.sheet-h [data-act=closesheet]');
+    if (f) f.focus({ preventScroll: true });
+    if (sh) sh.scrollTop = p.scroll;
+    return;
+  }
+  root.innerHTML = ''; document.body.style.overflow = '';
   const c = S._sheetClose; S._sheetClose = null; S.sheet = null; if (c) c();
   if (_deferRender) { _deferRender = false; renderCurrent(); }
+}
+function closeAllSheets() {
+  const parked = (S.sheetStack || []).map(p => p.onClose).filter(Boolean).reverse();
+  S.sheetStack = [];
+  closeSheet();
+  parked.forEach(c => { try { c(); } catch (e) { console.error(e); } });
 }
 
 /* ================= TRANSAÇÕES ================= */
@@ -1884,20 +1992,84 @@ function txMetaBits(t) {
   if (t.tags && t.tags.length) bits.push(`<span data-wallet>${esc(t.tags.join(', '))}</span>`);
   return bits;
 }
-function txRow(t) {
+function txRow(t, opts) {
+  opts = opts || {};
   const g = groupOf(t.categoryId); const unc = isUncat(t);
   const tags = [];
-  if (t.categoryId) tags.push(`<span class="tag"><span class="dot" style="background:${esc(g ? g.color : 'var(--ink-3)')}"></span>${esc(catLabel(t.categoryId))}</span>`);
+  if (opts.noCat) { /* the category is the chip next to the row (sheetTxRow) */ }
+  else if (t.categoryId) tags.push(`<span class="tag"><span class="dot" style="background:${esc(g ? g.color : 'var(--ink-3)')}"></span>${esc(catLabel(t.categoryId))}</span>`);
   else if (countable(t)) tags.push('<span class="tag warn">Sem categoria</span>');
   if (t.kind === 'card_payment' || t.kind === 'transfer' || t.kind === 'investment') tags.push(`<span class="tag acc">${esc(KIND_LBL[t.kind])}</span>`);
   if (t.catSource) tags.push(`<span class="tag ${t.catSource === 'ai' ? 'acc' : ''}">${esc(SRC_LBL[t.catSource] || t.catSource)}</span>`);
   if (t.note) tags.push('<span class="tag">nota</span>');
   const cls = t.amount > 0 ? 'in' : (t.kind === 'card_payment' || t.kind === 'transfer' ? 'muted' : '');
   const meta = txMetaBits(t);
-  const sel = S.ui.sel;
+  const sel = opts.edit ? null : S.ui.sel;
   return `<button type="button" class="tx ${unc ? 'uncat' : ''}" ${sel ? `data-act="seltx" aria-pressed="${sel.has(t.id)}"` : 'data-act="edittx"'} data-id="${esc(t.id)}">${sel ? `<span class="ck" aria-hidden="true">${sel.has(t.id) ? '✓' : ''}</span>` : ''}${txIcon(t)}
     <span class="mid"><span class="mer">${esc(t.merchant || t.rawDescription)}</span>${meta.length ? `<span class="meta">${meta.join('<span aria-hidden="true">·</span>')}</span>` : ''}<span class="raw">${esc(t.rawDescription)} · ${esc(accName(t.accountId))}</span><span class="tags">${tags.join('')}</span></span>
     <span class="amt ${cls}">${t.amount > 0 ? '+' : ''}${brl(t.amount)}</span></button>`;
+}
+
+/* v2.6: a transaction row inside a Painel sheet — the row opens the editor on top of the sheet; the chip under it
+   opens the category picker directly ("Sem categoria" → tap → pick). Transfers / card payments: the row only. */
+function catChipHTML(t) {
+  if (!countable(t)) return '';
+  const g = groupOf(t.categoryId); const lbl = t.categoryId ? catLabel(t.categoryId) : 'Sem categoria';
+  return `<button type="button" class="chip catchip${t.categoryId ? '' : ' warn'}" data-act="txcat" data-id="${esc(t.id)}" aria-label="Categoria: ${esc(lbl)}. Trocar a categoria de ${esc(t.merchant || t.rawDescription)}">${t.categoryId ? `<span class="dot" style="background:${esc(g ? g.color : 'var(--ink-3)')}" aria-hidden="true"></span>` : ''}<span class="cl">${esc(lbl)}</span><span aria-hidden="true" class="cv">▾</span></button>`;
+}
+function sheetTxRow(t) {
+  const chip = catChipHTML(t);
+  return `<div class="txr" data-row="${esc(t.id)}">${txRow(t, { noCat: !!chip, edit: true })}${chip ? `<div class="txr-foot">${chip}</div>` : ''}</div>`;
+}
+const sheetTxHint = () => '<p class="xs muted sheet-hint">Toque num lançamento para editar, ou na categoria para trocar só ela.</p>';
+
+/* --- quick category picker (stacked over the sheet it was opened from) --- */
+function openQuickCat(id) {
+  const t = txById(id); if (!t) return;
+  S.qp = { id, group: null, newCat: false, touched: false, remember: true };
+  const head = `<span class="eyebrow">${esc(isoToBR(t.date))} · ${esc(accName(t.accountId))}</span><h2 style="word-break:break-word">${esc(t.merchant || t.rawDescription)}</h2><p class="money ${t.amount > 0 ? 'in' : ''}" style="font-weight:700">${t.amount > 0 ? '+' : ''}${brl(t.amount)}</p>`;
+  openSheet(head, '<div id="qp-body"></div>', () => { S.qp = null; }, { kind: 'quickcat', id, label: 'Escolher categoria' }, { stack: true, focus: '#qp-body .sug-btn, #qp-body .tri-btn' });
+  renderQuickPick();
+}
+function renderQuickPick() {
+  const el = $('#qp-body'); const U = S.qp; if (!el || !U) return;
+  const t = txById(U.id);
+  if (!t) { el.innerHTML = '<p class="muted">Este lançamento não existe mais.</p>'; return; }
+  const amb = eng('ambiguousMatch', t, ctx());
+  const rem = U.touched ? U.remember : (!amb && rememberDefault(t, null));
+  let choices;
+  if (U.newCat) choices = newCatForm('qp', { open: true, kind: t.amount > 0 ? 'income' : 'expense' });
+  else if (U.group) {
+    const g = (D().categories || []).find(x => x.id === U.group) || { id: U.group, name: U.group, children: [] };
+    choices = `<div class="row"><button class="btn ghost sm" type="button" data-act="qp-back">‹ Grupos</button><b>${esc(g.name)}</b></div><div class="tri-grid" id="qp-cats">
+      ${(g.children || []).map(c => `<button type="button" class="tri-btn sub" data-act="qp-pick" data-cat="${esc(c.id)}" aria-pressed="${t.categoryId === c.id}"><span class="sw" style="background:${esc(g.color)}"></span>${esc(c.name)}</button>`).join('')}
+      <button type="button" class="tri-btn sub" data-act="qp-pick" data-cat="${esc(g.id)}" aria-pressed="${t.categoryId === g.id}"><span class="sw" style="background:${esc(g.color)};opacity:.4"></span>${esc(g.name)} (geral)</button></div>`;
+  } else {
+    const sugs = (eng('suggestCategories', t, Object.assign(ctx(), { transactions: live() })) || []).filter(x => catIndex()[x.categoryId] && x.categoryId !== t.categoryId).slice(0, 4);
+    choices = `${sugs.length ? `<div class="field"><span class="lbl">Sugestões</span><div class="sug-row" id="qp-sugs">${sugs.map(x => { const g = groupOf(x.categoryId); return `<button type="button" class="sug-btn" data-act="qp-pick" data-cat="${esc(x.categoryId)}" title="${esc(x.reason || '')}"><span class="sw" style="background:${esc(g ? g.color : 'var(--accent)')}"></span>${esc(catLabel(x.categoryId))}</button>`; }).join('')}</div></div>` : ''}
+      <div class="tri-grid" id="qp-groups">${likelyGroups(t).map(g => `<button type="button" class="tri-btn" data-act="qp-group" data-g="${esc(g.id)}"><span class="sw" style="background:${esc(g.color)}"></span>${esc(g.name)}</button>`).join('')}
+      <button type="button" class="tri-btn" data-act="qp-newcat" id="qp-newcat"><span class="sw" style="background:var(--line-2)"></span>+ Nova categoria</button></div>`;
+  }
+  el.innerHTML = `${t.categoryId ? `<p class="small">Agora: <span class="tag"><span class="dot" style="background:${esc((groupOf(t.categoryId) || {}).color || 'var(--ink-3)')}"></span>${esc(catLabel(t.categoryId))}</span></p>` : ''}
+    <label class="remember small" for="qp-remember"><input type="checkbox" id="qp-remember" ${rem ? 'checked' : ''}><span>Lembrar esta categoria para <b>${esc(t.merchant || t.rawDescription)}</b>${amb && !U.touched ? '<br><span class="xs muted">Desmarcado: este estabelecimento vende de tudo.</span>' : ''}${t.installment ? '<br><span class="xs muted">Desmarcado, a categoria vale só para esta compra parcelada.</span>' : ''}</span></label>
+    ${choices}
+    <div class="row">${t.amount < 0 && t.categoryId !== NAO_ID ? '<button class="btn sm" type="button" data-act="qp-unid" id="qp-unid">Não sei o que é</button>' : ''}<button class="btn sm ghost" type="button" data-act="qp-more" id="qp-more">Mais opções (tipo, observação…)</button></div>`;
+}
+function catUndo(res) {
+  return () => { const d = D(); const meta = []; if (res.rules) { d.rules = res.rules; meta.push('rules'); } if (res.history) d.history = res.history; commit({ txs: (res.txs || []).map(x => clone(x)), meta }); toast('Desfeito'); };
+}
+function quickPick(catId) {
+  const U = S.qp; const t = U && txById(U.id); if (!t) return;
+  const box = $('#qp-remember');
+  const def = rememberDefault(t, catId);
+  const remember = catId === NAO_ID ? false : (U.touched && box ? box.checked : def);
+  if (U.touched && catId !== NAO_ID) noteRememberChoice(catId, remember, def);
+  const res = setCategory(t, catId, catId === NAO_ID ? { remember: false, kind: 'expense' } : { remember });
+  closeSheet();
+  const bits = [catLabel(catId) + ' para ' + (t.merchant || t.rawDescription)];
+  if (res.created) bits.push('regra aprendida');
+  if (res.series) bits.push(seriesLabel(res.series)); else if (res.n) bits.push('+' + res.n + ' do mesmo lugar');
+  toast(bits.join(' · '), false, { label: 'Desfazer', fn: catUndo(res) });
 }
 
 /* --- filters (session-remembered) --- */
@@ -2137,7 +2309,7 @@ function seriesNote(t) {
   return { rule: r, from: Math.min(...ns, t.installment.n), to: t.installment.total };
 }
 
-function openTxEditor(id) {
+function openTxEditor(id, opts) {
   const t = txById(id); if (!t) return;
   const head = `<span class="eyebrow">${esc(new Date(t.date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }))}${t.time ? ' · ' + esc(t.time) : ''} · ${esc(accName(t.accountId))}</span>
     <h2 style="word-break:break-word">${esc(t.merchant || t.rawDescription)}</h2><p class="money ${t.amount > 0 ? 'in' : ''}" style="font-size:1.25rem;font-weight:700">${t.amount > 0 ? '+' : ''}${brl(t.amount)}</p>
@@ -2154,7 +2326,7 @@ function openTxEditor(id) {
     ${t.amount < 0 && countable(t) && t.categoryId !== NAO_ID ? `<div class="row"><button class="btn sm" type="button" data-act="ed-unid" data-id="${esc(t.id)}" id="ed-unid">Não sei o que é</button><span class="xs muted grow">Conta como gasto em "Não identificado". Dá para rever depois em Transações.</span></div>` : ''}
     ${t.catSource ? `<p class="xs muted">Categoria atual veio de: ${esc(SRC_LBL[t.catSource] || t.catSource)}.</p>` : ''}
     <div class="row end"><button class="btn" type="button" data-act="closesheet">Cancelar</button><button class="btn primary" type="button" data-act="savetx" data-id="${esc(t.id)}">Salvar</button></div>`;
-  openSheet(head, body, null, { kind: 'editor', id: t.id, label: 'Editar lançamento' });
+  openSheet(head, body, null, { kind: 'editor', id: t.id, label: 'Editar lançamento' }, { stack: !!(opts && opts.stack) });
 }
 
 /**
@@ -2265,7 +2437,7 @@ function saveTxEdit(id) {
   if (res && res.created) bits.push('regra aprendida para ' + (t.merchant || ''));
   if (res && res.series) bits.push(seriesLabel(res.series));
   else if (res && res.n) bits.push(res.n + ' outro' + (res.n > 1 ? 's' : '') + ' de ' + t.merchant);
-  toast(bits.join(' · '));
+  toast(bits.join(' · '), false, res ? { label: 'Desfazer', fn: catUndo(res) } : null);
   return true;
 }
 
@@ -3923,7 +4095,7 @@ function openAccountSheet() {
     : `<p class="small muted">${esc(storageText())}</p>`, null, { kind: 'account', label: 'Conta' });
 }
 async function doLogin() { try { if (store) await store.login(); } catch (e) { reportErr('Não consegui abrir o login (' + (e && e.message || e) + ').'); } }
-async function doLogout() { closeSheet(); try { if (store) await store.logout(); } catch (e) { reportErr('Não consegui sair (' + (e && e.message || e) + ').'); } }
+async function doLogout() { closeAllSheets(); try { if (store) await store.logout(); } catch (e) { reportErr('Não consegui sair (' + (e && e.message || e) + ').'); } }
 
 async function exportBackup() {
   if (!store || S.mode !== 'real') return;
@@ -4245,6 +4417,7 @@ function ncSave(p) {
   const id = createCategoryFromForm(p);
   if (!id) return;
   if (p === 'tri') { TRI.newCat = false; triagePick(id); return; }
+  if (p === 'qp') { if (S.qp) S.qp.newCat = false; quickPick(id); return; }
   if (NC_SELECT[p]) {
     const sel = $('#' + NC_SELECT[p]);
     if (sel) {
@@ -4271,7 +4444,15 @@ const ACT = {
   login: () => doLogin(),
   logout: () => doLogout(),
   account: () => openAccountSheet(),
-  month: el => { S.ui.month = addMonths(S.ui.month, +el.dataset.d); renderPainel(); },
+  month: el => {
+    const d = +el.dataset.d < 0 ? -1 : 1;
+    const had = document.activeElement === el;
+    if (!stepPeriod(d)) return;
+    renderPainel();
+    // keyboard: keep focus on the same arrow (or the other one when this one became disabled)
+    const b = $(`#period-bar [data-act="month"][data-d="${d}"]`), o = $(`#period-bar [data-act="month"][data-d="${-d}"]`);
+    const f = b && !b.disabled ? b : o; if (had && f) f.focus({ preventScroll: true });
+  },
   range: el => { S.ui.range = +el.dataset.r; renderPainel(); },
   view: el => { S.ui.view = el.dataset.v; renderPainel(); },
   full: () => { S.ui.full = !S.ui.full; renderPainel(); },
@@ -4283,11 +4464,19 @@ const ACT = {
   'f-preset': el => { const [f, t] = presetRange(el.dataset.k); const a = $('#f-from'), b = $('#f-to'); if (a) a.value = isoToBR(f); if (b) b.value = isoToBR(t); readDateField('f-from'); readDateField('f-to'); },
   datepick: el => openDatePicker(el.dataset.for),
   more: () => { S.ui.txLimit = (S.ui.txLimit || 200) + 200; renderTxList(); },
-  edittx: el => { if ($('#triage-root').innerHTML) return; openTxEditor(el.dataset.id); },
+  // a row inside a sheet (Painel drill-downs, Transferências): the editor goes on top and Salvar/Cancelar come back
+  edittx: el => { if ($('#triage-root').innerHTML) return; openTxEditor(el.dataset.id, { stack: !!el.closest('#sheet-root') && !!S.sheet && S.sheet.kind !== 'editor' }); },
+  txcat: el => { if ($('#triage-root').innerHTML) return; const t = txById(el.dataset.id); if (!t) return; if (!countable(t)) { openTxEditor(t.id, { stack: true }); return; } openQuickCat(t.id); },
+  'qp-group': el => { S.qp.group = el.dataset.g; renderQuickPick(); const f = $('#qp-cats .tri-btn'); if (f) f.focus({ preventScroll: true }); },
+  'qp-back': () => { S.qp.group = null; renderQuickPick(); },
+  'qp-pick': el => quickPick(el.dataset.cat),
+  'qp-newcat': () => { const b = $('#qp-remember'); if (b) { S.qp.remember = b.checked; } S.qp.newCat = true; renderQuickPick(); const n = $('#qp-nc-name'); if (n) n.focus(); },
+  'qp-unid': () => quickPick(NAO_ID),
+  'qp-more': () => { const id = S.qp && S.qp.id; if (!id) return; closeSheet(); openTxEditor(id, { stack: true }); },
   closesheet: () => closeSheet(),
   savetx: el => { if (saveTxEdit(el.dataset.id) !== false) closeSheet(); },
   'nc-open': el => ncOpen(el.dataset.p),
-  'nc-cancel': el => { if (el.dataset.p === 'tri') { TRI.newCat = false; renderTriage(); return; } ncClose(el.dataset.p); },
+  'nc-cancel': el => { if (el.dataset.p === 'tri') { TRI.newCat = false; renderTriage(); return; } if (el.dataset.p === 'qp' && S.qp) { S.qp.newCat = false; renderQuickPick(); return; } ncClose(el.dataset.p); },
   'nc-save': el => ncSave(el.dataset.p),
   triage: () => startTriage(),
   'tri-close': () => stopTriage(),
@@ -4429,7 +4618,7 @@ const ACT = {
 };
 document.addEventListener('click', ev => {
   const tab = ev.target.closest('.tab');
-  if (tab) { closeSheet(); if ($('#triage-root').innerHTML) stopTriage(); setTab(tab.dataset.tab); return; }
+  if (tab) { closeAllSheets(); if ($('#triage-root').innerHTML) stopTriage(); setTab(tab.dataset.tab); return; }
   const el = ev.target.closest('[data-act]'); if (!el) return;
   if (el.tagName === 'DETAILS' || el.tagName === 'SUMMARY') return;
   const fn = ACT[el.dataset.act]; if (!fn) return;
@@ -4490,6 +4679,7 @@ document.addEventListener('change', ev => {
     if (t.dataset && t.dataset.alf) { alInput(t); return; }
     if (t.dataset && t.dataset.ncgroup) { const ng = $('#' + t.dataset.ncgroup + '-nc-ng'); if (ng) ng.hidden = t.value !== '__newgroup'; return; }
     if (t.id === 'tri-remember') { TRI.remember = t.checked; TRI.touched = true; return; }
+    if (t.id === 'qp-remember' && S.qp) { S.qp.remember = t.checked; S.qp.touched = true; return; }
     if (t.id === 'ed-kind') { const a = $('#ed-tr'), b = $('#ed-cp'); if (a) a.hidden = t.value !== 'transfer'; if (b) b.hidden = t.value !== 'card_payment'; return; }
     if (t.id === 'ed-tr-acc') { const cur = txById(((S.sheet || {}).id) || ''); const box = $('#ed-tr-pairs'); if (cur && box) box.innerHTML = t.value ? edPairHTML(cur, t.value) : ''; return; }
     if (t.dataset && t.dataset.who) { const root = t.closest('[data-who-where]'); if (root) { S.trUI = Object.assign(S.trUI || {}, { who: whoSelected(root.dataset.whoWhere) }); } return; }

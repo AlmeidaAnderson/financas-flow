@@ -296,3 +296,29 @@ or spending. Everything below is generic (formats + columns + names), never per-
   account respect the account currency (a USD statement goes to the USD account, with a note).
 - **Corpus harness** (runtime only, nothing stored): `test/corpus.test.js` + `test/corpus/{pipeline,corpus,importer,plan}.js`
   + `test/corpus/reference.py` (independent reader) + `test/e2e/e2e_corpus.py`, all keyed on `FF_CORPUS_DIR`.
+
+## v2.6 additions — window stepping, editable rows everywhere (app only, no engine/store change)
+- **Period bar**: `stepPeriod(dir)` moves `S.ui.month` (the window END) by `S.ui.range` (1/3/6/12); forward is clamped so
+  the window ends at most at `periodMaxEnd()` = the current month (or the newest month with data, when a row is dated
+  ahead); › is `disabled` there. `periodStepLbl` gives the aria/title ("3 meses anteriores" / "Próximos 3 meses");
+  `periodLabel` → "jul–set 2026" / "nov 2025–jan 2026" (short: "jul–set/26", "nov/25–jan/26"). The label is `aria-live`;
+  focus stays on the arrow. `renderPainel` keeps the screen's height during the redraw (min-height + scroll restore), so a
+  step in the stuck bar does not jump; stuck on a phone, the bar compacts (30px arrows, "Mês" → "1m") so the longest
+  label ("nov/25–jan/26") fits next to ‹ › ⋯.
+- **Stacked sheets**: `openSheet(head, body, onClose, meta, { stack: true, focus })` parks the open sheet (`inert`,
+  `aria-hidden`, its `#sheet-body` renamed `#sheet-body-under`, scroll + focused row remembered) and adds a layer above it
+  (z-index 50 + 2·depth). `closeSheet()` closes only the top layer, restores the parked one, runs `refreshOpenSheet()` +
+  `refreshOpenSheet(true)`, restores scroll and focus (the row, found again by `data-id`). A non-stacked `openSheet`
+  replaces the whole stack (as before); `closeAllSheets()` (tab change, logout) empties it and runs the parked `onClose`s.
+- **Refreshable drill-downs**: `nodeSheetParts`/`refreshNodeSheet` (Sankey, meta `{kind:'node', id, name}`) and
+  `ccSheetParts`/`refreshCcSheet` (category chart, meta `{kind:'cc', sid, key}` — the period is found again by its key).
+  They read the freshly drawn Painel, so `renderAfterChange` calls `refreshOpenSheet(true)` AFTER `renderCurrent()`; a
+  block that emptied shows an empty state. One `commit()` per edit → Painel + open sheet + other devices.
+- **Rows**: `sheetTxRow(t)` = `txRow(t, { noCat, edit })` (always `edittx`, even in Transações' select mode) + a category
+  chip (`catChipHTML`, `data-act="txcat"`; none for transfers / card payments). `edittx` inside a sheet → the editor is
+  stacked. `txcat` → `openQuickCat`: suggestions, groups → categories, "+ Nova categoria" (`newCatForm('qp')`), "Lembrar"
+  (same defaults as triage: ambiguous merchants and `rememberOff` start unticked), "Não sei o que é", "Mais opções" (full
+  editor); a pick = `setCategory` + toast "Desfazer" (`catUndo`: txs, rules, history). The editor's category change also
+  gets "Desfazer". Transferências: `trRow` and pairs are buttons (`edittx`). Parcelas futuras: projected rows are plain
+  text ("prevista"); the pencil opens the purchase they come from (`sourceId`, the last imported parcela). Data health,
+  alerts, carry-over and Gerenciar dados list no individual rows (counts and months only), so they have nothing to tap.

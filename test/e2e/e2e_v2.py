@@ -458,6 +458,9 @@ def scenario_real_data(b):
     pg.click('[data-act="savetx"]')
     pg.wait_for_timeout(200)
     inc_after, exp_after = kpi(pg, 'income'), kpi(pg, 'expense')
+    # v2.6: Salvar returns to the Sankey sheet (the editor was stacked on it) — close it
+    check(J(pg, '() => (__ff.state().sheet || {}).kind') == 'node', 'Salvar returns to the Sankey sheet (v2.6)')
+    pg.keyboard.press('Escape'); pg.wait_for_timeout(150)
     check(inc_after == inc_before + amt and exp_after == exp_before + amt, f'KPIs updated in place: income {inc_before}→{inc_after}, expense {exp_before}→{exp_after} (amount {amt})')
     # and from the Transações tab
     goto_tab(pg, 'tx')

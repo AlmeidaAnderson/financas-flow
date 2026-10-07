@@ -163,3 +163,20 @@ Do one block per sitting. Tick each line. If something fails, note **what you cl
   transfers; monthly totals; data health; card days) and `npm run build:artifact && FF_CORPUS_DIR=<pasta> python3
   test/e2e/e2e_corpus.py` (one batch per institution in the Artifact build with the fake db, then the whole folder again).
   Synthetic regressions of each pattern: `test/engine_v25_corpus.test.js`.
+
+## v2.6 — período em blocos e categoria em qualquer lançamento (5 min)
+- [ ] Painel → 3m → ‹ volta 3 meses inteiros (jul–set → abr–jun); › avança 3; no mês atual o › fica apagado; perto do mês
+      atual o › para no mês atual (ago–out, não set–nov). Mesmo com 6m e 12m. Mês continua de 1 em 1.
+- [ ] Celular: role o Painel até a barra grudar no topo → ‹ › funcionam ali, o rótulo ("abr–jun/26") aparece inteiro e a
+      tela não pula.
+- [ ] Toque num bloco do fluxo → num lançamento → o editor abre por cima → Salvar → volta para a mesma lista, na mesma
+      posição, já sem o lançamento (e o Painel atrás já mudou). Esc / Cancelar também voltam para a lista.
+- [ ] Na lista, toque em "Sem categoria" → escolha grupo → categoria → pronto (com Lembrar, "+ Nova categoria", "Não sei o
+      que é"); "Desfazer" no aviso traz de volta.
+- [ ] O mesmo numa barra do gráfico de categorias e em Transferências (linhas e pares).
+- [ ] Parcelas futuras: as parcelas previstas não abrem nada; o lápis abre a compra.
+- [ ] Outro aparelho: a mudança aparece, e a lista aberta lá se atualiza.
+- Automated: `npm run build:artifact && python3 test/e2e/e2e_v26.py` (Artifact + fake db at 390 light full flow + a second
+  synced page at 1280 dark; 390 dark / 1280 light / 1280 dark screens; local mode 390 light flow + 1280 dark screens —
+  stepping by 1/3/6/12, clamp, labels, aria, keyboard focus, sticky bar, every Painel sheet → editor/picker → sheet and
+  Painel updated, scroll kept, projected parcelas not editable). Screenshots: `screens/v26/`.

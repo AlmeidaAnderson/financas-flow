@@ -311,6 +311,9 @@ def scenario_main(b):
     pg.click('[data-act="savetx"]')
     pg.wait_for_timeout(200)
     check(kpi(pg, 'income') == inc_before + amt and kpi(pg, 'expense') == exp_before + amt, f'KPIs updated in place (amount {amt})')
+    # v2.6: Salvar returns to the Sankey sheet (the editor was stacked on it) — close it
+    check(J(pg, '() => (__ff.state().sheet || {}).kind') == 'node', 'Salvar returns to the Sankey sheet (v2.6)')
+    pg.keyboard.press('Escape'); pg.wait_for_timeout(150)
     flushed(pg)
     check((db_rows().get(tx_id) or {}).get('categoryId') == 'renda.outros', 'category change saved in the db')
 

@@ -62,6 +62,7 @@ p{margin:0}
 .store-pill.warn{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
 .icon-btn{width:40px;height:40px;border-radius:12px;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center;cursor:pointer;flex:none}
 .icon-btn svg{width:20px;height:20px}
+.icon-btn:disabled{opacity:.35;cursor:default}
 main{max-width:720px;margin:0 auto;padding-inline:16px;padding-block:14px calc(var(--tabbar-h) + 28px + env(safe-area-inset-bottom,0px))}
 .screen{display:flex;flex-direction:column;gap:16px}
 .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -360,7 +361,11 @@ input.invalid{border-color:var(--out)!important}
 .period.stuck .month-nav .lbl-m{font-size:1rem;white-space:nowrap}
 .period.stuck .seg{flex-wrap:nowrap}
 .period.stuck .seg button{min-height:28px;padding:3px 8px;font-size:.8rem}
-@media (max-width:599px){.period.stuck .lbl-long{display:none}.period.stuck .lbl-short{display:inline}}
+@media (max-width:599px){.period.stuck .lbl-long{display:none}.period.stuck .lbl-short{display:inline}
+  /* v2.6: room for the window label ("nov/25–jan/26") next to ‹ › ⋯ and the range buttons ("Mês" → "1m") */
+  .period.stuck .month-nav .icon-btn{width:30px;height:30px}.period.stuck .month-nav .lbl-m{font-size:.86rem;padding-inline:1px}.period.stuck .seg button{padding:3px 5px}.period.stuck .seg{padding:2px}
+  .period.stuck .seg .seg-l{display:none}.period.stuck .seg .seg-s{display:inline}}
+.seg .seg-s{display:none}
 /* v2.2 — Gastos por categoria ao longo do tempo */
 #catchart-card{position:relative}
 .cc-controls{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:flex-end}
@@ -527,3 +532,26 @@ input.invalid{border-color:var(--out)!important}
 .ed-sub{border-left:3px solid var(--accent-soft);padding-left:10px}
 #tr-body{display:flex;flex-direction:column;gap:12px;min-width:0}
 #tr-body h3{margin:6px 0 0}
+
+/* ---------- v2.6: tappable rows in Painel sheets, category chip, stacked sheets, Parcelas futuras ---------- */
+.txr{border-top:1px solid var(--line)}
+.txr:first-child{border-top:0}
+.txr .tx{border-top:0;padding-bottom:5px}
+.txr-foot{padding:0 13px 10px 59px;display:flex;min-width:0}
+.catchip{min-height:30px;padding:3px 10px;font-size:.8rem;max-width:100%;min-width:0;gap:5px}
+.catchip .cl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.catchip .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.catchip .cv{font-size:.7rem;color:var(--ink-3);flex:none}
+.catchip.warn{background:var(--warn-soft);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+.catchip.warn .cv{color:inherit}
+.catchip:hover{border-color:var(--ink-3)}
+.sheet-hint{margin:-8px 0 0}
+.sheet.stacked{max-height:86vh;max-height:86dvh;box-shadow:0 -14px 50px rgba(0,0,0,.32)}
+.sheet-layer.under .sheet{filter:saturate(.85)}
+.tri-btn[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+button.tr-row{width:100%;text-align:left;background:none;border-left:0;border-right:0;border-bottom:0;font:inherit;color:inherit;cursor:pointer;border-radius:0}
+button.tr-row:hover,button.tr-pair:hover{background:var(--surface-2)}
+button.tr-pair{width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;display:flex;flex-direction:column;gap:2px}
+.icon-btn.sm{width:30px;height:30px;border-radius:9px}
+.icon-btn.sm svg{width:16px;height:16px}
+.fut-item{align-items:center}
